@@ -1,6 +1,6 @@
 # 拼接子文档到主文档联动编辑
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/yifengjob/-siyuan-concat-subdocs)](https://github.com/yifengjob/siyuan-concat-subdocs/releases)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/yifengjob/siyuan-concat-subdocs)](https://github.com/yifengjob/siyuan-concat-subdocs/releases)
 [![GitHub license](https://img.shields.io/github/license/yifengjob/siyuan-concat-subdocs)](LICENSE)
 
 一个思源笔记插件，可以在主文档底部自动拼接其子文档的内容，并保持完美的渲染效果。支持实时编辑同步、悬停预览、一键清除所有拼接状态等功能。
@@ -27,7 +27,7 @@
    - `README.md`
    - `README.en_US.md`
    - `LICENSE`
-   - i18n
+   - `i18n/`
       - `zh_CN.json`
       - `en_US.json`
 3. 重启思源笔记，或在「设置 – 集市 – 已下载」中启用插件。
