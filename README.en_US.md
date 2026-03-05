@@ -1,11 +1,9 @@
 # Concatenate Subdocuments to Main Document with Live Editing
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/yifengjob/siyuan-plugin-concat-subdocs)](https://github.com/yifengjob/siyuan-plugin-concat-subdocs/releases)
-[![GitHub license](https://img.shields.io/github/license/yifengjob/siyuan-plugin-concat-subdocs)](LICENSE)
+[![GitHub license](https://img.shields.io/github/license/yifengjob/siyuan-plugin-concat-subdocs)](https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/LICENSE)
 
 A SiYuan note plugin that automatically concatenates the content of subdocuments to the bottom of the main document while maintaining perfect rendering. It supports real-time editing synchronization, hover preview, one-click reset of all concatenation states, and more.
-
-![](preview.png)
 
 ## Features
 
@@ -20,7 +18,7 @@ A SiYuan note plugin that automatically concatenates the content of subdocuments
 
 ### Manual Installation
 
-1. In your [SiYuan workspace](https://github.com/siyuan-note/siyuan), create a folder named `concat-subdocs` under `data/plugins/`.
+1. In your [SiYuan workspace](https://github.com/siyuan-note/siyuan), create a folder named `siyuan-plugin-concat-subdocs` under `data/plugins/`.
 2. Place all the following files from this repository into that folder:
 
 ```
@@ -38,9 +36,9 @@ A SiYuan note plugin that automatically concatenates the content of subdocuments
 
 3. Restart SiYuan, or enable the plugin in `Settings – Marketplace – Downloaded`.
 
-### Via Community Marketplace (Coming Soon)
+### Using the Community Marketplace
 
-The plugin is planned to be submitted to the official SiYuan marketplace, where it can be installed with one click in the future.
+Search for `siyuan-plugin-concat-subdocs` or `subdocument concatenation` (or similar keywords) in the marketplace to install with one click.
 
 ## Usage
 
@@ -82,7 +80,7 @@ Issues and pull requests are welcome. For local development, please ensure Node.
 ### Project Structure
 
 ```
-concat-subdocs/
+siyuan-plugin-concat-subdocs/
 ├── i18n/
 │   ├── zh_CN.json    # Chinese locale file
 │   └── en_US.json    # English locale file
@@ -110,4 +108,4 @@ concat-subdocs/
 
 If you find this plugin helpful, please give it a ⭐! If you're feeling generous, feel free to scan the QR code below to support me.
 
-<img src="wechat-reward.png" alt="WeChat Reward Code" width="400" style="height: auto;">
+<img src="https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/wechat-reward.png" alt="WeChat Reward Code" width="400" style="height: auto;">
