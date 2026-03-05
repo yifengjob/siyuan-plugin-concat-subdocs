@@ -1,0 +1,36 @@
+{
+  "name": "concat-subdocs",
+  "author": "YiFeng",
+  "version": "1.0.0",
+  "displayName": {
+    "default": "子文档拼接",
+    "zh_CN": "子文档拼接",
+    "en_US": "Concat Subdocs"
+  },
+  "description": {
+    "default": "一个思源笔记插件，可以在主文档底部自动拼接其子文档的内容，并保持完美的渲染效果。支持实时编辑同步、悬停预览、一键清除所有拼接状态等功能。",
+    "zh_CN": "一个思源笔记插件，可以在主文档底部自动拼接其子文档的内容，并保持完美的渲染效果。支持实时编辑同步、悬停预览、一键清除所有拼接状态等功能。",
+    "en_US": "A plugin for concat subdocs in the bottom of main doc. Support realtime sync, hover preview, clear all concat status and more."
+  },
+  "backends": ["all"],
+  "frontends": ["all"],
+  "i18n": [
+    "zh_CN",
+    "en_US"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yifengyou/siyuan-plugin-concat-subdocs.git"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README.md",
+    "en_US": "README.en_US.md"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "echo \"无需构建\""
+  },
+  "keywords": ["子文档", "编辑", "联动", "拼接", "实时", "预览", "悬停", "一键" , "清除" , "状态", "插件", "思源笔记" ]
+}

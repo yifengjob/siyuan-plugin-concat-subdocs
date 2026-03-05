@@ -1,0 +1,17 @@
+{
+  "toggleTitle": "切换子文档拼接",
+  "clearStatesTitle": "清除所有拼接状态",
+  "clearStatesDesc": "将所有文档的拼接状态重置为“关闭”。此操作不可撤销，请谨慎使用。",
+  "clearConfirm": "确定要清除所有文档的拼接状态吗？此操作不可撤销。",
+  "clearing": "正在清除拼接状态，请稍候...",
+  "clearSuccess": "已清除 {count} 个文档的拼接状态",
+  "clearFail": "清除失败，请查看控制台日志",
+  "noDocFound": "未找到任何文档",
+  "noCurrentDoc": "未找到当前文档",
+  "noDocId": "未找到当前文档ID",
+  "editorUnavailable": "编辑器容器不可用",
+  "noSubDocs": "当前文档没有子文档",
+  "editLinkTitle": "编辑",
+  "subDocTitle": "未命名",
+  "loadSubDocfailed": "加载子文档失败"
+}

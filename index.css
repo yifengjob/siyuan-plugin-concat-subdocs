@@ -1,0 +1,42 @@
+.concat-subdocs-container {
+    margin-top: 20px;
+    border-top: 1px dashed var(--b3-theme-primary);
+    padding-top: 10px;
+}
+
+.concat-subdoc-item {
+    position: relative;
+    margin-bottom: 0;
+    padding: 0;
+    border: none;
+    border-bottom: 1px dashed var(--b3-theme-surface-lighter);
+    padding-bottom: 20px;
+}
+
+.concat-subdoc-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.concat-subdoc-content {
+    background-color: var(--b3-theme-background);
+    min-height: 50px;
+    padding: 0;
+}
+
+.concat-edit-link {
+    position: absolute;
+    top: 0;
+    right: 0;
+    opacity: 0.3;
+    transition: opacity 0.2s;
+    color: var(--b3-theme-primary);
+    text-decoration: none;
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.concat-edit-link:hover {
+    opacity: 1;
+    background-color: var(--b3-theme-surface-lighter);
+}
