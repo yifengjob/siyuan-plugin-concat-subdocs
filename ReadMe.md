@@ -1,7 +1,7 @@
 # 拼接子文档到主文档联动编辑
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/yourname/concat-subdocs)](https://github.com/yourname/concat-subdocs/releases)
-[![GitHub license](https://img.shields.io/github/license/yourname/concat-subdocs)](LICENSE)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/yifengjob/-siyuan-concat-subdocs)](https://github.com/yifengjob/siyuan-concat-subdocs/releases)
+[![GitHub license](https://img.shields.io/github/license/yifengjob/siyuan-concat-subdocs)](LICENSE)
 
 一个思源笔记插件，可以在主文档底部自动拼接其子文档的内容，并保持完美的渲染效果。支持实时编辑同步、悬停预览、一键清除所有拼接状态等功能。
 
@@ -18,10 +18,18 @@
 
 ### 手动安装
 1. 在[思源笔记工作空间](https://github.com/siyuan-note/siyuan)的 `data/plugins/` 目录下创建文件夹 `concat-subdocs`。
-2. 将本仓库中的以下三个文件放入该文件夹：
+2. 将本仓库中的以下所有文件放入该文件夹：
    - `index.js`
    - `index.css`
    - `plugin.json`
+   - `icon.png`
+   - `preview.png`
+   - `README.md`
+   - `README.en_US.md`
+   - `LICENSE`
+   - i18n
+      - `zh_CN.json`
+      - `en_US.json`
 3. 重启思源笔记，或在「设置 – 集市 – 已下载」中启用插件。
 
 ### 使用社区集市（待上架）
@@ -30,7 +38,7 @@
 ## 使用说明
 
 ### 切换拼接模式
-- 点击顶部工具栏（或左下角状态栏）的 **拼接图标**（一个链接形状的图标），即可切换当前文档的拼接状态。
+- 点击顶部工具栏的 **子文档拼接图标**，即可切换当前文档的拼接状态。
 - 开启后，所有子文档内容将按文件树顺序显示在主文档底部，每个子文档之间用虚线分隔。
 - 再次点击图标可关闭拼接，恢复原始视图。
 
@@ -63,15 +71,21 @@
 ### 项目结构
 ```
 concat-subdocs/
+├── i18n/
+|   ├── zh_CN.json    # 中文本地化文件
+|   └── en_US.json    # 英文本地化文件
 ├── index.js          # 主插件代码
 ├── index.css         # 样式文件
+├── icon.png          # 图标文件
 ├── plugin.json       # 插件配置
-└── README.md         # 本文档
+├── preview.png       # 界面预览
+├── README.en_US.md   # 英文说明文档
+└── README.md         # 默认说明档
 ```
 
 ## 许可证
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
 
 ## 致谢
 
