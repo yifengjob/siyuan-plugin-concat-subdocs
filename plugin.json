@@ -4,13 +4,13 @@
   "url": "https://github.com/yifengjob/siyuan-plugin-concat-subdocs",
   "version": "1.0.0",
   "minAppVersion": "3.3.0",
+  "disabledInPublish": false,
   "backends": [
     "all"
   ],
   "frontends": [
     "all"
   ],
-  "disabledInPublish": false,
   "displayName": {
     "default": "子文档拼接",
     "zh_CN": "子文档拼接",
