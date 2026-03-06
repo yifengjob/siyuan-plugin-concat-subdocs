@@ -13,5 +13,10 @@
   "noSubDocs": "当前文档没有子文档",
   "editLinkTitle": "编辑",
   "subDocTitle": "未命名",
-  "loadSubDocfailed": "加载子文档失败"
+  "loadSubDocfailed": "加载子文档失败",
+  "maxLevelTitle": "最大递归层级",
+  "maxLevelDesc": "设置递归拼接子文档的最大层级，最大为 3 层。",
+  "maxCountTitle": "最大子文档数量",
+  "maxCountDesc": "限制拼接的子文档最大数量，最多为 500 个。",
+  "maxCountReached": "已超过最大数量 {count}，仅显示前 {count} 个。"
 }
