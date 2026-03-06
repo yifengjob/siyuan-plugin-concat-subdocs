@@ -1,7 +1,13 @@
 const { Plugin, showMessage, Setting } = require('siyuan');
 
 module.exports = class ConcatSubDocsPlugin extends Plugin {
-    onload() {
+
+    async onload() {
+        this.config = {
+            maxLevel: 1,
+            maxCount: 10,
+        };
+        await this.loadConfig(); // 加载配置
         this.concatContainers = new Map();
         this.subdocElements = new Map(); // 存储子文档ID与其DOM元素的映射，用于快速更新
         this.lastToggleTime = 0;
@@ -17,6 +23,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         this.setting = new Setting({
             confirmCallback: () => this.saveConfig(),
         });
+        // 添加设置项：清除所有拼接状态
         this.setting.addItem({
             title: this.i18n.clearStatesTitle,
             description: this.i18n.clearStatesDesc,
@@ -28,6 +35,64 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
                 return button;
             },
         });
+
+        // 添加设置项：拼接文档最大层级
+        this.setting.addItem({
+            title: this.i18n.maxLevelTitle,
+            description: this.i18n.maxLevelDesc,
+            direction: 'row',
+            createActionElement: () => {
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'b3-text-field';
+                input.style.width = '100px';
+                input.value = this.config.maxLevel;
+                input.min = 1;
+                input.step = 1;
+                input.addEventListener('change', async () => {
+                    const val = parseInt(input.value, 10);
+                    if (isNaN(val) || val < 0) {
+                        input.value = this.config.maxLevel;
+                        return;
+                    }
+                    if (val > 3) {
+                        input.value = 3;
+                    }
+                    this.config.maxLevel = Math.min(val, 3);
+                    await this.saveData('config', this.config);
+                });
+                return input;
+            },
+        });
+
+        // 添加设置项：拼接文档最大数量
+        this.setting.addItem({
+            title: this.i18n.maxCountTitle,
+            description: this.i18n.maxCountDesc,
+            direction: 'row',
+            createActionElement: () => {
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'b3-text-field';
+                input.style.width = '100px';
+                input.value = this.config.maxCount;
+                input.min = 10;
+                input.step = 5;
+                input.addEventListener('change', async () => {
+                    const val = parseInt(input.value, 10);
+                    if (isNaN(val) || val < 10) {
+                        input.value = this.config.maxCount;
+                        return;
+                    }
+                    if (val > 500) {
+                        input.value = 500;
+                    }
+                    this.config.maxCount = Math.min(val, 500);
+                    await this.saveData('config', this.config);
+                });
+                return input;
+            }
+        })
 
         this.eventBus.on('loaded-protyle-dynamic', this.onProtyleLoaded.bind(this));
         this.eventBus.on('loaded-protyle-static', this.onProtyleLoaded.bind(this));
@@ -44,7 +109,17 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         this.eventBus.off('ws-main', this.handleWsMain);
         // if (this.setting) this.setting.destroy();
     }
+    async loadConfig() {
+        const saved = await this.loadData('config');
+        console.log('saved max level：', saved);
+        if (saved) {
+            this.config = { ...this.config, ...saved };
+        }
+    }
 
+    async saveConfig() {
+        await this.saveData('config', this.config);
+    }
     // 处理 ws-main 事件，捕获块更新
     async handleWsMain(event) {
         const detail = event.detail;
@@ -78,6 +153,8 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
                             const contentDiv = element.querySelector('.concat-subdoc-content');
                             if (contentDiv) {
                                 contentDiv.innerHTML = newContent;
+                                // 设置子文档内容不可编辑
+                                this.setSubElementNotEditable(contentDiv);
                             }
                         }
                     }
@@ -168,19 +245,23 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         if (!docId) return;
 
         const enabled = await this.getConcatState(docId);
+        const editorElement = protyle.wysiwyg.element;
         if (enabled) {
             const subDocs = await this.getSubDocs(docId);
             if (subDocs.length > 0) {
-                this.enableConcat(docId, protyle.wysiwyg.element).catch(console.error);
-                // setTimeout(() => {
-                    
-                // }, 10);
+                setTimeout(() => {
+                    this.enableConcat(docId, editorElement).catch(console.error);
+
+                }, 10);
             } else {
                 await this.setConcatState(docId, false);
             }
         } else {
-            const existing = protyle.wysiwyg.element?.querySelector(`.concat-subdocs-container[data-doc-id="${docId}"]`);
-            if (existing) existing.remove();
+            if (editorElement) editorElement.classList.remove('concat-maindoc-editor');
+            const existing = editorElement.nextElementSibling;
+            if (existing && existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)) {
+                existing.remove(); // 存在则移除
+            }
             this.concatContainers.delete(docId);
         }
     }
@@ -222,15 +303,17 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
             return;
         }
 
-        const existingContainer = editorElement.querySelector(`.concat-subdocs-container[data-doc-id="${docId}"]`);
-        if (existingContainer) {
-            existingContainer.remove();
+        const existing = editorElement.nextElementSibling;
+        if (existing && existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)) {
+            existing.remove();
+            editorElement.classList.remove('concat-maindoc-editor');
             this.concatContainers.delete(docId);
             await this.setConcatState(docId, false);
         } else {
             await this.enableConcat(docId, editorElement);
             await this.setConcatState(docId, true);
         }
+
     }
 
     async getConcatState(docId) {
@@ -256,6 +339,19 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         return this.callApi('/api/attr/setBlockAttrs', { id: blockId, attrs });
     }
 
+    async getAllSubDocs(parentDocId, currentLevel = 1) {
+        if (this.config.maxLevel > 0 && currentLevel > this.config.maxLevel) {
+            return [];
+        }
+        const result = [];
+        const directSubs = await this.getSubDocs(parentDocId);
+        for (const sub of directSubs) {
+            result.push(sub);
+            const descendants = await this.getAllSubDocs(sub.id, currentLevel + 1);
+            result.push(...descendants);
+        }
+        return result;
+    }
     async getSubDocs(parentDocId) {
         try {
             const parentDoc = await this.getBlockInfo(parentDocId);
@@ -381,16 +477,29 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     }
 
     async enableConcat(docId, editorElement) {
-        const existing = editorElement.querySelectorAll(`.concat-subdocs-container[data-doc-id="${docId}"]`);
-        if (existing.length > 0) existing.forEach(container => container.remove());
+        editorElement.classList.add('concat-maindoc-editor');
 
-        const subDocs = await this.getSubDocs(docId);
+        const existing = editorElement.nextElementSibling;
+        if (existing && existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)) {
+            existing.remove();
+        }
+        let subDocs = await this.getAllSubDocs(docId);
         if (subDocs.length === 0) return;
+
+        if (this.config.maxCount > 0 && subDocs.length > this.config.maxCount) {
+            subDocs = subDocs.slice(0, this.config.maxCount);
+            // 可以提示用户已截断，但为避免频繁提示，可选
+            showMessage(this.i18n.maxCountReached.replace(/\{count\}/g, this.config.maxCount), 3000, 'info');
+        }
 
         const container = document.createElement('div');
         container.className = 'concat-subdocs-container';
         container.setAttribute('data-doc-id', docId);
-        editorElement.appendChild(container);
+        container.contentEditable = "false";
+        // 复制 editorElement 的样式到 container 中
+        container.style.cssText = editorElement.style.cssText;
+        // 将 container 插入到 editorElement 之后
+        editorElement.insertAdjacentElement('afterend', container);
 
         const promises = subDocs.map(async (subDoc) => {
             const content = await this.getDocRenderedContent(subDoc.id);
@@ -400,19 +509,22 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
 
         for (const subDoc of docsWithContent) {
             const subDocContainer = document.createElement('div');
-            subDocContainer.className = 'concat-subdoc-item';
+            subDocContainer.classList.add('protyle-wysiwyg', 'concat-subdoc-item', 'protyle-custom');
             subDocContainer.setAttribute('data-subdoc-id', subDoc.id);
 
             const header = document.createElement('div');
             header.className = 'protyle-title__input';
-            header.textContent = subDoc.name || this.i18n.subDocTitle ;
+            header.textContent = subDoc.name || this.i18n.subDocTitle;
             header.contentEditable = "false";
             subDocContainer.appendChild(header);
 
             const contentDiv = document.createElement('div');
-            // contentDiv.className = 'concat-subdoc-content protyle-wysiwyg';
+            contentDiv.className = 'concat-subdoc-content protyle-wysiwyg';
             contentDiv.innerHTML = subDoc.content;
-            contentDiv.contentEditable = "true"; 
+            contentDiv.contentEditable = "false";
+
+            // 将所有后代元素设置为只读
+            this.setSubElementNotEditable(contentDiv);
 
             // 思源原生块引用，实现悬停预览
             const editLink = document.createElement('span');
@@ -439,6 +551,15 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         });
 
         this.concatContainers.set(docId, { container });
+    }
+
+    setSubElementNotEditable(contentDiv) {
+        const allElements = contentDiv.querySelectorAll('*');
+        allElements.forEach(el => {
+            el.contentEditable = "false";
+            // el.removeAttribute('data-type'); // 删除 data-type 属性
+            // el.style.pointerEvents = 'none';
+        });
     }
 
     removeAllConcatContainers() {
