@@ -160,6 +160,16 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
                         if (op.parentID) {
                             const parentInfo = await this.getBlockInfo(op.parentID).catch(() => null);
                             if (parentInfo) rootId = parentInfo.rootID;
+                        } else {
+                            // 通过在文档中查找<div data-node-id="op.id"></div>元素，然后获取父元素 ID。
+                            const element = document.querySelector(`[data-node-id="${op.id}"]`);
+                            if (element) {
+                                const ancestor = element.closest('[data-subdoc-id]');
+                                if (ancestor) {
+                                    rootId = ancestor.getAttribute('data-subdoc-id');
+                                }
+                            }
+
                         }
                     } else {
                         // 其他操作：直接获取块信息
