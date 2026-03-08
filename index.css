@@ -44,6 +44,27 @@
     margin: 0;
 }
 
+/* 编辑链接柔和闪烁动画关键帧 */
+@keyframes concatEditLinkBlink {
+    0% {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        background-color: var(--b3-theme-background);
+        transform: scale(1);
+    }
+    50% {
+        /* 柔和高亮 - 使用半透明主题色 */
+        box-shadow: 0 0 10px rgba(var(--b3-theme-primary-rgb), 0.4);
+        background-color: rgba(var(--b3-theme-primary-rgb), 0.15);
+        transform: scale(1.1);
+    }
+    100% {
+        /* 最终状态 - 保持轻微高亮 */
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        background-color: var(--b3-theme-background);
+        transform: scale(1);
+    }
+}
+
 .concat-edit-link {
     position: absolute;
     right: 8px;
@@ -67,14 +88,19 @@
     pointer-events: auto;
 }
 
+/* 鼠标悬停时显示编辑链接，并触发柔和闪烁动画 */
 .concat-subdoc-item:hover .concat-edit-link {
     opacity: 0.9;
+    /* 应用闪烁动画：持续 0.8 秒，播放 1 次，更平滑 */
+    animation: concatEditLinkBlink 0.8s ease-in-out;
 }
 
 .concat-edit-link:hover {
     opacity: 1;
     background-color: var(--b3-theme-surface-lighter);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    /* 鼠标再次悬停时重置动画 */
+    animation: none;
 }
 
 .concat-edit-link .icon {
