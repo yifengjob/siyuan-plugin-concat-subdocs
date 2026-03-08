@@ -1,6 +1,7 @@
 .concat-maindoc-editor {
     padding-bottom: 16px !important;
 }
+
 .concat-subdocs-container {
     margin-top: 20px;
     border-top: 1px dashed var(--b3-theme-primary);
@@ -25,34 +26,58 @@
     min-height: 50px;
     padding: 0;
 }
+
 /* 列表样式增强 */
 .concat-subdoc-content.protyle-wysiwyg ul,
 .concat-subdoc-content.protyle-wysiwyg ol {
     padding-left: 2em;
     margin: 0.5em 0;
 }
+
 .concat-subdoc-content.protyle-wysiwyg li {
     margin: 0.2em 0;
     line-height: 1.625;
     min-height: calc(1.625em + 8px);
 }
+
 .concat-subdoc-content.protyle-wysiwyg li p {
     margin: 0;
 }
 
 .concat-edit-link {
     position: absolute;
-    top: 0;
-    right: 0;
-    opacity: 0.3;
-    transition: opacity 0.2s;
+    right: 8px;
+    transform: translateY(0);
+    will-change: transform;
+    opacity: 0.1;
+    /* 调整过渡时间，让位置变化更平滑 */
+    transition: opacity 0.2s ease, transform 0.25s ease-out;
     color: var(--b3-theme-primary);
     text-decoration: none;
     padding: 4px;
-    border-radius: 4px;
+    border-radius: 50%;
+    z-index: 10;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--b3-theme-background);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+}
+
+.concat-subdoc-item:hover .concat-edit-link {
+    opacity: 0.9;
 }
 
 .concat-edit-link:hover {
     opacity: 1;
     background-color: var(--b3-theme-surface-lighter);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.concat-edit-link .icon {
+    width: 16px;
+    height: 16px;
 }
