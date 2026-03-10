@@ -1,8 +1,8 @@
 /**
  * @fileoverview 思源笔记子文档拼接插件
  * @description 将当前文档的子文档内容拼接显示在主文档下方，支持多层级递归
- * @author SiYuan Plugin Team
- * @version 1.0.0
+ * @author yifeng
+ * @version 1.0.6
  */
 
 const { Plugin, showMessage, Setting } = require("siyuan");
