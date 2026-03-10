@@ -16,6 +16,18 @@ const MAX_COUNT = 500;
 /** 递归获取子文档的最大层级深度 */
 const MAX_LEVEL = 5;
 
+/** 悬浮编辑按钮距离顶部最小距离 */
+const FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE = 100;
+
+/** 悬浮编辑按钮距离顶部最大距离 */
+const FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE = 500;
+
+/** 悬浮编辑按钮距离底部最小距离 */
+const FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE = 50;
+
+/** 悬浮编辑按钮距离底部最大距离 */
+const FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE = 300;
+
 /** 工具栏按钮图标 SVG */
 const ICON =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22"><path fill="currentColor" d="M3 14V9h8v5zm0-7V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v2zm2 14q-.825 0-1.412-.587T3 19v-3h8v5zm8-7V9h8v2.3q-.95-.425-2.025-.25t-1.875.975L15.125 14zm0 8v-3.075l5.525-5.5q.225-.225.5-.325t.55-.1q.3 0 .575.113t.5.337l.925.925q.2.225.313.5t.112.55t-.1.563t-.325.512l-5.5 5.5zm6.575-5.6l.925-.975l-.925-.925l-.95.95z"/></svg>';
@@ -131,6 +143,67 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
           }
           this.config.maxCount = Math.min(val, MAX_COUNT);
           // await this.saveData(STORAGE_NAME, this.config);
+        });
+        return input;
+      },
+    });
+
+    // 添加设置项：悬浮编辑按钮距顶部距离
+    this.setting.addItem({
+      title: this.i18n.floatingEditButtonTopDistanceTitle,
+      description: this.i18n.floatingEditButtonTopDistanceDesc,
+      direction: "row",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field";
+        input.style.width = "100px";
+        input.value = this.config.floatingEditButtonTopDistance;
+        input.min = FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE;
+        input.step = 1;
+        input.addEventListener("change", async () => {
+          const val = parseInt(input.value, 10);
+          if (isNaN(val) || val < FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE) {
+            input.value = this.config.floatingEditButtonTopDistance;
+            return;
+          }
+          if (val > FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE) {
+            input.value = FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE;
+          }
+          this.config.floatingEditButtonTopDistance = Math.min(
+            val,
+            FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE,
+          );
+        });
+        return input;
+      },
+    });
+    // 添加设置项：悬浮编辑按钮距底部距离
+    this.setting.addItem({
+      title: this.i18n.floatingEditButtonBottomDistanceTitle,
+      description: this.i18n.floatingEditButtonBottomDistanceDesc,
+      direction: "row",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field";
+        input.style.width = "100px";
+        input.value = this.config.floatingEditButtonBottomDistance;
+        input.min = FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE;
+        input.step = 1;
+        input.addEventListener("change", async () => {
+          const val = parseInt(input.value, 10);
+          if (isNaN(val) || val < FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE) {
+            input.value = this.config.floatingEditButtonBottomDistance;
+            return;
+          }
+          if (val > FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE) {
+            input.value = FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE;
+          }
+          this.config.floatingEditButtonBottomDistance = Math.min(
+            val,
+            FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE,
+          );
         });
         return input;
       },
@@ -275,6 +348,8 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     this.config = {
       maxLevel: 1,
       maxCount: 10,
+      floatingEditButtonTopDistance: 105,
+      floatingEditButtonBottomDistance: 55,
     };
     const saved = await this.loadData(STORAGE_NAME);
     if (saved) {
@@ -985,9 +1060,8 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     const viewportWidth = window.innerWidth;
 
     // 屏幕安全边距（避开顶部工具栏和底部状态栏）
-    const TOP_SAFE = 105;
-    const BOTTOM_SAFE = 45;
-    const HORIZONTAL_SAFE = 20; // 水平方向最小留白
+    const TOP_SAFE = this.config.floatingEditButtonTopDistance;
+    const BOTTOM_SAFE = this.config.floatingEditButtonBottomDistance;
 
     // 预估浮窗宽度（仅用于水平左移判断）
     const FLOAT_WIDTH = 320;
