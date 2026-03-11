@@ -108,4 +108,4 @@ AGPL-3.0
 
 If you find this plugin helpful, please give it a ⭐! If you're feeling generous, feel free to scan the QR code below to support me.
 
-<img src="https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/wechat-reward.png" alt="WeChat Reward Code" width="400" style="height: auto;box-shadow: 0px 0px 5px #aaaaaa;">
+<img src="https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/wechat-reward.png" alt="WeChat Reward Code" width="300" align="center" style="height: auto;box-shadow: 0px 0px 5px #aaaaaa;">
