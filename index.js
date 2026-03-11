@@ -1,8 +1,8 @@
 /**
- * @fileoverview 思源笔记子文档拼接插件
+ * @fileoverview 思源笔记子文档拼接插件（优化版）
  * @description 将当前文档的子文档内容拼接显示在主文档下方，支持多层级递归
  * @author yifeng
- * @version 1.0.6
+ * @version 1.0.7
  */
 
 const { Plugin, showMessage, Setting } = require("siyuan");
@@ -33,6 +33,28 @@ const ICON =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22"><path fill="currentColor" d="M3 14V9h8v5zm0-7V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v2zm2 14q-.825 0-1.412-.587T3 19v-3h8v5zm8-7V9h8v2.3q-.95-.425-2.025-.25t-1.875.975L15.125 14zm0 8v-3.075l5.525-5.5q.225-.225.5-.325t.55-.1q.3 0 .575.113t.5.337l.925.925q.2.225.313.5t.112.55t-.1.563t-.325.512l-5.5 5.5zm6.575-5.6l.925-.975l-.925-.925l-.95.95z"/></svg>';
 
 /**
+ * 简单并发控制函数，限制同时运行的 Promise 数量
+ * @param {Array} items 待处理项
+ * @param {Function} handler 处理函数，接收每一项，返回 Promise
+ * @param {number} concurrency 最大并发数
+ * @returns {Promise<Array>} 所有处理结果
+ */
+async function pLimit(items, handler, concurrency = 5) {
+  const results = [];
+  const executing = new Set();
+  for (const item of items) {
+    const p = Promise.resolve().then(() => handler(item));
+    results.push(p);
+    const e = p.then(() => executing.delete(e));
+    executing.add(e);
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  return Promise.all(results);
+}
+
+/**
  * 子文档拼接插件主类
  * 功能：将当前文档的子文档内容拼接显示在主文档下方
  * @extends Plugin
@@ -54,17 +76,9 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
 
     // 存储清理函数，用于卸载时移除事件监听
     this.cleanupFunctions = [];
-    // 性能优化：存储当前鼠标 Y 坐标和当前悬停的容器
+    // 性能优化：存储当前鼠标 Y 坐标（未使用，但保留框架）
     this.currentMouseY = 0;
-    this.currentHoverContainer = null;
     this.rafId = null; // requestAnimationFrame ID，用于动画帧调度
-
-    // 添加顶部工具栏按钮（已禁用）
-    // this.addTopBar({
-    //   icon: ICON,
-    //   title: this.i18n.toggleTitle,
-    //   callback: () => this.toggleConcatForCurrentDoc(),
-    // });
 
     // 初始化设置面板
     this.setting = new Setting({
@@ -102,10 +116,11 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         input.style.width = "100px";
         input.value = this.config.maxLevel;
         input.min = 1;
+        input.max = MAX_LEVEL;
         input.step = 1;
         input.addEventListener("change", async () => {
           const val = parseInt(input.value, 10);
-          if (isNaN(val) || val < 0) {
+          if (isNaN(val) || val < 1) {
             input.value = this.config.maxLevel;
             return;
           }
@@ -113,7 +128,6 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
             input.value = MAX_LEVEL;
           }
           this.config.maxLevel = Math.min(val, MAX_LEVEL);
-          // await this.saveData(STORAGE_NAME, this.config);
         });
         return input;
       },
@@ -131,6 +145,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         input.style.width = "100px";
         input.value = this.config.maxCount;
         input.min = 10;
+        input.max = MAX_COUNT; // 增加 max 属性
         input.step = 5;
         input.addEventListener("change", async () => {
           const val = parseInt(input.value, 10);
@@ -142,7 +157,6 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
             input.value = MAX_COUNT;
           }
           this.config.maxCount = Math.min(val, MAX_COUNT);
-          // await this.saveData(STORAGE_NAME, this.config);
         });
         return input;
       },
@@ -160,6 +174,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         input.style.width = "100px";
         input.value = this.config.floatingEditButtonTopDistance;
         input.min = FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE;
+        input.max = FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE; // 增加 max
         input.step = 1;
         input.addEventListener("change", async () => {
           const val = parseInt(input.value, 10);
@@ -190,6 +205,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         input.style.width = "100px";
         input.value = this.config.floatingEditButtonBottomDistance;
         input.min = FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE;
+        input.max = FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE; // 增加 max
         input.step = 1;
         input.addEventListener("change", async () => {
           const val = parseInt(input.value, 10);
@@ -217,14 +233,9 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     const scrollHandler = this.debounce(refreshPositions, 10);
     const resizeHandler = this.debounce(refreshPositions, 10);
 
-    // 鼠标移动处理器，用于追踪悬停容器
+    // 鼠标移动处理器（仅用于触发位置更新）
     const mouseMoveHandler = (e) => {
       this.currentMouseY = e.clientY;
-      const hoverContainer = document
-        .elementFromPoint(e.clientX, e.clientY)
-        ?.closest(".concat-subdoc-item");
-      this.currentHoverContainer = hoverContainer;
-
       // 使用 requestAnimationFrame 优化性能，避免频繁更新
       if (!this.rafId) {
         this.rafId = requestAnimationFrame(() => {
@@ -313,7 +324,6 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     this.eventBus.off("loaded-protyle-static", this.onProtyleLoaded);
     this.eventBus.off("unload-doc", this.handleDocUnload);
     this.eventBus.off("ws-main", this.handleWsMain);
-    // if (this.setting) this.setting.destroy();
     // 清理窗口事件监听器
     if (this.cleanupFunctions) {
       this.cleanupFunctions.forEach((fn) => fn());
@@ -364,10 +374,11 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       await this.saveData(STORAGE_NAME, this.config);
       showMessage(this.i18n.configSavedSuccess, 2000);
     } catch (error) {
-      showMessage(this.i18n.configSavedFailed);
+      showMessage(this.i18n.configSavedFail);
       console.error(error);
     }
   }
+
   /**
    * 处理 ws-main 事件，捕获块更新
    * 当子文档内容发生变化时，实时更新拼接显示
@@ -392,6 +403,20 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         const blockId = op.id;
         if (!blockId) continue;
 
+        // 处理文档块删除：尝试从拼接区域移除对应容器
+        if (op.action === "delete" && op.type === "d") {
+          // 直接查找对应的容器并移除
+          const subdocContainer = document.querySelector(
+            `.concat-subdoc-item[data-subdoc-id="${blockId}"]`,
+          );
+          if (subdocContainer) {
+            subdocContainer.remove();
+            this.subdocElements.delete(blockId);
+            // 还需要更新父文档的计数等？但父文档的容器可能还在，但子项已移除，不影响
+          }
+          continue; // 不再尝试更新内容
+        }
+
         let rootId = null;
         try {
           if (op.action === "delete") {
@@ -401,8 +426,9 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
                 () => null,
               );
               if (parentInfo) rootId = parentInfo.rootID;
-            } else {
-              // 通过在文档中查找<div data-node-id="op.id"></div>元素，然后获取父元素
+            }
+            // 如果无法通过父 ID 获取，尝试 DOM 查找
+            if (!rootId) {
               const element = document.querySelector(
                 `[data-node-id="${op.id}"]`,
               );
@@ -433,7 +459,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
             const contentDiv = element.querySelector(".concat-subdoc-content");
             if (contentDiv) {
               contentDiv.innerHTML = newContent;
-              this.setSubElementNotEditable(contentDiv);
+              this.setSubElementContentEditable(contentDiv);
             }
           }
         }
@@ -464,17 +490,20 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       const total = docIds.length;
       let processed = 0;
 
-      // 分批处理，避免单次请求过大
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < docIds.length; i += BATCH_SIZE) {
-        const batch = docIds.slice(i, i + BATCH_SIZE);
-        const updates = batch.map((id) => ({
-          id,
-          data: { "custom-concat": "false" },
-        }));
-        await this.callApi("/api/attr/batchSetBlockAttrs", { updates });
-        processed += batch.length;
-      }
+      // 分批并发设置属性，避免单次请求过多
+      const BATCH_SIZE = 10; // 并发数
+      await pLimit(
+        docIds,
+        async (id) => {
+          try {
+            await this.setBlockAttrs(id, { "custom-concat": "false" });
+            processed++;
+          } catch (e) {
+            console.error(`设置文档 ${id} 属性失败`, e);
+          }
+        },
+        BATCH_SIZE,
+      );
 
       // 清理当前打开的文档容器
       if (this.app && this.app.workspace) {
@@ -598,12 +627,11 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       toggleButton.innerHTML = ICON;
       toggleButton.className = `block__icon fn__flex-center ariaLabel concat-toggle-button ${enabled ? "concat-enabled" : ""}`;
       toggleButton.ariaLabel = this.i18n.toggleTitle;
-      toggleButton.onclick = () => {
-        this.toggleConcatForCurrentDoc().then(() => {
-          this.getConcatState(docId).then((enabled) => {
-            toggleButton.classList.toggle("concat-enabled", enabled);
-          });
-        });
+      // 修复：使用 async 函数确保状态更新后再获取新状态
+      toggleButton.onclick = async () => {
+        await this.toggleConcatForCurrentDoc();
+        const newEnabled = await this.getConcatState(docId);
+        toggleButton.classList.toggle("concat-enabled", newEnabled);
       };
       breadcrumb__space.insertAdjacentElement("afterend", toggleButton);
     }
@@ -783,12 +811,14 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       if (!parentDoc) return [];
       const parentPath = parentDoc.path;
       const parentDir = parentPath.replace(/\.sy$/, "");
+      // 转义路径中的单引号以防 SQL 注入
+      const escapedParentDir = parentDir.replace(/'/g, "''");
       const sql = `
                 SELECT id, name, path
                 FROM blocks
-                WHERE path LIKE '${parentDir}/%'
+                WHERE path LIKE '${escapedParentDir}/%'
                 AND type = 'd'
-                AND path NOT LIKE '${parentDir}/%/%'
+                AND path NOT LIKE '${escapedParentDir}/%/%'
                 ORDER BY sort ASC
             `;
       const result = await this.callApi("/api/query/sql", { stmt: sql });
@@ -939,12 +969,15 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     container.style.cssText = editorElement.style.cssText;
     editorElement.insertAdjacentElement("afterend", container);
 
-    // 并行获取所有子文档内容
-    const promises = subDocs.map(async (subDoc) => {
-      const content = await this.getDocRenderedContent(subDoc.id);
-      return { ...subDoc, content };
-    });
-    const docsWithContent = await Promise.all(promises);
+    // 并行获取所有子文档内容，但限制并发数
+    const docsWithContent = await pLimit(
+      subDocs,
+      async (subDoc) => {
+        const content = await this.getDocRenderedContent(subDoc.id);
+        return { ...subDoc, content };
+      },
+      5, // 并发数设为5
+    );
 
     // 渲染每个子文档
     for (const subDoc of docsWithContent) {
@@ -956,21 +989,28 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       );
       subDocContainer.setAttribute("data-subdoc-id", subDoc.id);
 
+      // 创建标题容器
+      const headerContainer = document.createElement("div");
+      headerContainer.className = "protyle-title protyle-wysiwyg--attr";
+      headerContainer.contentEditable = "false";
+
       // 创建标题
       const header = document.createElement("div");
       header.className = "protyle-title__input";
       header.textContent = subDoc.name || this.i18n.subDocTitle;
       header.contentEditable = "false";
-      subDocContainer.appendChild(header);
+      headerContainer.appendChild(header);
+      subDocContainer.appendChild(headerContainer);
 
       // 创建内容区域
       const contentDiv = document.createElement("div");
-      contentDiv.className = "concat-subdoc-content protyle-wysiwyg";
+      contentDiv.className =
+        "concat-subdoc-content protyle-wysiwyg protyle-wysiwyg--attr";
       contentDiv.innerHTML = subDoc.content;
       contentDiv.contentEditable = "false";
 
       // 将所有后代元素设置为只读
-      this.setSubElementNotEditable(contentDiv);
+      this.setSubElementContentEditable(contentDiv);
 
       // 创建编辑链接（思源原生块引用，实现悬停预览）
       const editLink = document.createElement("span");
@@ -1007,13 +1047,14 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
   }
 
   /**
-   * 将子文档内容区域的所有元素设置为不可编辑
+   * 设置子文档内容区域的所有元素可编辑性
    * @param {HTMLElement} contentDiv - 内容区域元素
+   * @param {string} [value="false"] - 元素可编辑性值
    */
-  setSubElementNotEditable(contentDiv) {
+  setSubElementContentEditable(contentDiv, value = "false") {
     const allElements = contentDiv.querySelectorAll("*");
     allElements.forEach((el) => {
-      el.contentEditable = "false";
+      el.contentEditable = value;
     });
   }
 
@@ -1053,35 +1094,42 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
   /**
    * 更新所有编辑链接的位置
    * 根据容器位置和视口大小动态调整链接位置，确保始终可见
+   * 增加了统一的垂直边距，使按钮在容器顶部和底部都保持相同间距
    */
   updateEditLinkPositions() {
+    // 编辑链接元素的高度（28px，由 CSS 决定）
     const editLinkHeight = 28;
+    // 当前视口的高度和宽度
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
 
-    // 屏幕安全边距（避开顶部工具栏和底部状态栏）
+    // 统一的垂直边距，使按钮不紧贴容器顶部/底部（单位：px）
+    const VERTICAL_MARGIN = 20;
+
+    // 从配置中读取屏幕安全边距（避开顶部工具栏和底部状态栏）
     const TOP_SAFE = this.config.floatingEditButtonTopDistance;
     const BOTTOM_SAFE = this.config.floatingEditButtonBottomDistance;
 
-    // 预估浮窗宽度（仅用于水平左移判断）
-    const FLOAT_WIDTH = 320;
-
-    // 水平左移阈值：右侧空间小于此值时切换到左侧
+    // 水平左移阈值：当右侧空间小于此值时，将按钮切换到容器左侧显示
     const LEFT_SHIFT_THRESHOLD = 50;
 
+    // 获取所有子文档容器元素
     const containers = document.querySelectorAll(".concat-subdoc-item");
-    const viewportCenterY = viewportHeight / 2; // 窗口垂直中心
+    // 视口垂直中心位置
+    const viewportCenterY = viewportHeight / 2;
 
     containers.forEach((container) => {
+      // 获取该容器内的编辑链接
       const editLink = container.querySelector(".concat-edit-link");
       if (!editLink) return;
 
+      // 获取容器的位置和尺寸信息
       const containerRect = container.getBoundingClientRect();
       const containerTop = containerRect.top;
       const containerHeight = containerRect.height;
       const containerBottom = containerRect.bottom;
 
-      // ----- 水平方向：优先右侧，仅当右侧空间极小时才左移 -----
+      // ----- 水平方向处理：优先放在右侧，空间不足时切换到左侧 -----
       const screenRightSpace = viewportWidth - containerRect.right;
       if (screenRightSpace < LEFT_SHIFT_THRESHOLD) {
         editLink.classList.add("concat-edit-link--left");
@@ -1089,43 +1137,57 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         editLink.classList.remove("concat-edit-link--left");
       }
 
-      // 容器完全不可见，保持默认位置
+      // 如果容器完全不可见（在视口之外），将链接固定在顶部安全位置
       if (containerBottom < 0 || containerTop > viewportHeight) {
         editLink.style.transform = `translateY(${TOP_SAFE}px)`;
         return;
       }
 
-      // ----- 计算链接在容器内的垂直安全范围 -----
+      // ----- 计算链接在容器内的垂直安全范围（考虑容器可见部分和屏幕安全边距）-----
+      // 容器在视口中的可见部分
       const visibleTop = Math.max(0, containerTop);
       const visibleBottom = Math.min(viewportHeight, containerBottom);
 
-      const minTopVisible = visibleTop - containerTop;
-      const maxTopVisible = visibleBottom - containerTop - editLinkHeight;
+      // 基于可见区域，增加垂直边距后的最小/最大允许 top 值（相对于容器顶部）
+      const minTopVisible =
+        visibleTop - containerTop + VERTICAL_MARGIN - editLinkHeight / 2;
+      const maxTopVisible =
+        visibleBottom - containerTop - editLinkHeight - VERTICAL_MARGIN;
 
+      // 基于屏幕安全边距的最小/最大允许 top 值
       const minTopScreen = TOP_SAFE - containerTop;
       const maxTopScreen =
         viewportHeight - BOTTOM_SAFE - editLinkHeight - containerTop;
 
+      // 综合两个约束，取交集
       let minTop = Math.max(minTopVisible, minTopScreen);
       let maxTop = Math.min(maxTopVisible, maxTopScreen);
 
+      // 如果交集无效（minTop > maxTop），说明容器高度太小，无法同时满足所有约束，
+      // 此时退回到不加垂直边距的可见范围（但保留屏幕安全边距）
       if (minTop > maxTop) {
-        minTop = minTopVisible;
-        maxTop = maxTopVisible;
+        minTop = Math.max(visibleTop - containerTop, minTopScreen);
+        maxTop = Math.min(
+          visibleBottom - containerTop - editLinkHeight,
+          maxTopScreen,
+        );
       }
 
+      // 确保 minTop 和 maxTop 在 [0, 容器高度-按钮高度] 范围内
       minTop = Math.max(0, Math.min(minTop, containerHeight - editLinkHeight));
       maxTop = Math.max(0, Math.min(maxTop, containerHeight - editLinkHeight));
+
+      // 如果仍然无效，直接使用顶部安全位置作为后备
       if (minTop > maxTop) {
         const fallback = Math.min(containerHeight - editLinkHeight, TOP_SAFE);
         editLink.style.transform = `translateY(${fallback}px)`;
         return;
       }
 
-      // ----- 根据窗口垂直中心与容器的关系决定链接靠上还是靠下 -----
-      let preferTop; // true=放顶部，false=放底部
+      // ----- 决定链接应放置在容器的上半部分还是下半部分（基于窗口中心）-----
+      let preferTop; // true=靠上，false=靠下
 
-      // 特殊规则：容器高度超过视窗且上下边缘均超出时，优先放到底部
+      // 特殊情况：容器高度超过视口且上下边缘都不可见时，优先靠下
       if (containerTop < 0 && containerBottom > viewportHeight) {
         preferTop = false;
       } else {
@@ -1137,28 +1199,30 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
           // 容器整体在窗口中心下方 → 链接靠下
           preferTop = false;
         } else {
-          // 窗口中心在容器内部 → 比较上下边离中心的距离
+          // 窗口中心在容器内部 → 比较上下边离中心的距离，选择较远的一侧
           const distTop = viewportCenterY - containerTop;
           const distBottom = containerBottom - viewportCenterY;
           preferTop = distTop > distBottom;
         }
       }
 
+      // 根据偏好选择 minTop 或 maxTop 作为初始位置
       let finalTop = preferTop ? minTop : maxTop;
 
-      // 最终验证：确保链接绝对位置符合屏幕安全边距
+      // 再次验证屏幕安全边距（确保按钮绝对位置不会超出安全区域）
       const linkAbsTop = containerTop + finalTop;
       const linkAbsBottom = linkAbsTop + editLinkHeight;
       if (linkAbsTop < TOP_SAFE) {
-        finalTop += TOP_SAFE - linkAbsTop;
+        finalTop += TOP_SAFE - linkAbsTop; // 向上调整
       }
       if (linkAbsBottom > viewportHeight - BOTTOM_SAFE) {
-        finalTop -= linkAbsBottom - (viewportHeight - BOTTOM_SAFE);
+        finalTop -= linkAbsBottom - (viewportHeight - BOTTOM_SAFE); // 向下调整
       }
 
-      // 最后约束到 [minTop, maxTop] 范围内
+      // 最终限制在 [minTop, maxTop] 范围内
       finalTop = Math.max(minTop, Math.min(maxTop, finalTop));
 
+      // 应用变换
       editLink.style.transform = `translateY(${finalTop}px)`;
     });
   }
