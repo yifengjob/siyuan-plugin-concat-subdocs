@@ -2,7 +2,7 @@
  * @fileoverview 思源笔记子文档拼接插件（优化版）
  * @description 将当前文档的子文档内容拼接显示在主文档下方，支持多层级递归
  * @author yifeng
- * @version 1.0.7
+ * @version 1.0.8
  */
 
 const { Plugin, showMessage, Setting } = require("siyuan");
@@ -17,7 +17,7 @@ const MAX_COUNT = 500;
 const MAX_LEVEL = 5;
 
 /** 悬浮编辑按钮距离顶部最小距离 */
-const FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE = 100;
+const FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE = 105;
 
 /** 悬浮编辑按钮距离顶部最大距离 */
 const FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE = 500;
@@ -107,7 +107,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     // 添加设置项：拼接文档最大层级
     this.setting.addItem({
       title: this.i18n.maxLevelTitle,
-      description: this.i18n.maxLevelDesc,
+      description: this.i18n.maxLevelDesc.replace(/\{maxLevel\}/g, MAX_LEVEL),
       direction: "row",
       createActionElement: () => {
         const input = document.createElement("input");
@@ -136,7 +136,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     // 添加设置项：拼接文档最大数量
     this.setting.addItem({
       title: this.i18n.maxCountTitle,
-      description: this.i18n.maxCountDesc,
+      description: this.i18n.maxCountDesc.replace(/\{maxCount\}/g, MAX_COUNT),
       direction: "row",
       createActionElement: () => {
         const input = document.createElement("input");
@@ -165,7 +165,9 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     // 添加设置项：悬浮编辑按钮距顶部距离
     this.setting.addItem({
       title: this.i18n.floatingEditButtonTopDistanceTitle,
-      description: this.i18n.floatingEditButtonTopDistanceDesc,
+      description: this.i18n.floatingEditButtonTopDistanceDesc
+        .replace(/\{minDistance\}/g, FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE)
+        .replace(/\{maxDistance\}/g, FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE),
       direction: "row",
       createActionElement: () => {
         const input = document.createElement("input");
@@ -196,7 +198,9 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     // 添加设置项：悬浮编辑按钮距底部距离
     this.setting.addItem({
       title: this.i18n.floatingEditButtonBottomDistanceTitle,
-      description: this.i18n.floatingEditButtonBottomDistanceDesc,
+      description: this.i18n.floatingEditButtonBottomDistanceDesc
+        .replace(/\{minDistance\}/g, FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE)
+        .replace(/\{maxDistance\}/g, FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE),
       direction: "row",
       createActionElement: () => {
         const input = document.createElement("input");
@@ -585,15 +589,11 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     if (enabled) {
       const subDocs = await this.getSubDocs(docId);
       if (subDocs.length > 0) {
-        setTimeout(() => {
-          this.enableConcat(docId, editorElement).catch(console.error);
-        }, 10);
+        await this.enableConcat(docId, editorElement).catch(console.error);
       } else {
         await this.setConcatState(docId, false);
       }
     } else {
-      if (editorElement)
-        editorElement.classList.remove("concat-maindoc-editor");
       const existing = editorElement.nextElementSibling;
       if (
         existing &&
@@ -692,7 +692,6 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     ) {
       // 存在则移除，关闭拼接
       existing.remove();
-      editorElement.classList.remove("concat-maindoc-editor");
       this.concatContainers.delete(docId);
       await this.setConcatState(docId, false);
     } else {
@@ -967,6 +966,16 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     container.setAttribute("data-doc-id", docId);
     container.contentEditable = "false";
     container.style.cssText = editorElement.style.cssText;
+
+    const style = document.createElement("style");
+    style.textContent = `
+            .concat-maindoc-editor {
+                padding-bottom: ${editorElement.style.paddingTop || "0px"}!important;
+            }
+            .concat-subdocs-container { 
+                padding: 0 0 ${editorElement.style.paddingBottom}!important;
+            }`;
+    container.appendChild(style);
     editorElement.insertAdjacentElement("afterend", container);
 
     // 并行获取所有子文档内容，但限制并发数
@@ -988,6 +997,8 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
         "protyle-custom",
       );
       subDocContainer.setAttribute("data-subdoc-id", subDoc.id);
+      subDocContainer.style.cssText = editorElement.style.cssText;
+      subDocContainer.style.paddingBottom = editorElement.style.paddingTop;
 
       // 创建标题容器
       const headerContainer = document.createElement("div");
@@ -1111,7 +1122,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
     const BOTTOM_SAFE = this.config.floatingEditButtonBottomDistance;
 
     // 水平左移阈值：当右侧空间小于此值时，将按钮切换到容器左侧显示
-    const LEFT_SHIFT_THRESHOLD = 50;
+    const LEFT_SHIFT_THRESHOLD = 0;
 
     // 获取所有子文档容器元素
     const containers = document.querySelectorAll(".concat-subdoc-item");
@@ -1149,8 +1160,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       const visibleBottom = Math.min(viewportHeight, containerBottom);
 
       // 基于可见区域，增加垂直边距后的最小/最大允许 top 值（相对于容器顶部）
-      const minTopVisible =
-        visibleTop - containerTop + VERTICAL_MARGIN - editLinkHeight / 2;
+      const minTopVisible = visibleTop - containerTop + VERTICAL_MARGIN;
       const maxTopVisible =
         visibleBottom - containerTop - editLinkHeight - VERTICAL_MARGIN;
 
