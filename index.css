@@ -1,18 +1,10 @@
-.concat-maindoc-editor {
-  padding-bottom: 16px !important;
-}
-
 .concat-subdocs-container {
-  margin-top: 20px;
-  margin-bottom: 20px;
   border-top: 1px dashed var(--b3-border-color);
 }
 
 .concat-subdoc-item {
   position: relative;
   background-color: var(--b3-theme-background);
-  padding: 16px 0;
-  margin-bottom: 16px;
   border-bottom: 1px dashed var(--b3-border-color);
 }
 
@@ -52,7 +44,7 @@
   position: absolute;
   width: 28px;
   height: 28px;
-  right: 8px;
+  right: 28px;
   top: 0;
   display: flex;
   align-items: center;
