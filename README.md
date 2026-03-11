@@ -108,4 +108,4 @@ AGPL-3.0
 
 如果您觉得这个插件对您有帮助，欢迎点个 ⭐！如果您资金富余，欢迎扫码赞赏支持一下～
 
-<img src="https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/wechat-reward.png" alt="微信赞赏码" width="400" style="height: auto;box-shadow: 0px 0px 5px #aaaaaa;">
+<img src="https://github.com/yifengjob/siyuan-plugin-concat-subdocs/raw/main/wechat-reward.png" alt="微信赞赏码" width="300" align="center" style="height: auto;box-shadow: 0px 0px 5px #aaaaaa;">
