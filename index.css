@@ -76,12 +76,6 @@
   opacity: 1!important;
 }
 
-/* 左侧定位版本（当右侧空间不足时） */
-.concat-edit-link--left {
-  right: auto;
-  left: 8px;
-}
-
 .concat-edit-link .icon {
   width: 16px;
   height: 16px;
