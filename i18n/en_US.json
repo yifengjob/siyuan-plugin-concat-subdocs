@@ -29,5 +29,7 @@
   "floatingEditButtonDirectionTitle": "Floating Edit Button Direction",
   "floatingEditButtonDirectionDesc": "Direction of the floating edit button, can be \"left\" or \"right\".",
   "floatingEditButtonDirectionLeft": "Left",
-  "floatingEditButtonDirectionRight": "Right"
+  "floatingEditButtonDirectionRight": "Right",
+  "showSubDocTitleTitle": "Show Subdocument Title",
+  "showSubDocTitleDesc": "Show subdocument title in the concatenated document, default is on."
 }
