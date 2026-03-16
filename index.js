@@ -1,357 +1,1402 @@
 /**
- * @fileoverview 思源笔记子文档拼接插件（优化版）
+ * @fileoverview 思源笔记子文档拼接插件（优化版，使用 Protyle 临时渲染）
  * @description 将当前文档的子文档内容拼接显示在主文档下方，支持多层级递归
  * @author yifeng
- * @version 1.0.10
+ * @version 1.0.11
+ * @license AGPL-3.0
  */
 
-const { Plugin, showMessage, Setting } = require("siyuan");
+const { Plugin, showMessage, Setting, Protyle } = require("siyuan");
 
-/** 插件数据存储名称 */
-const STORAGE_NAME = "concat-subdocs";
-
-/** 拼接子文档最大数量限制 */
-const MAX_COUNT = 500;
-
-/** 递归获取子文档的最大层级深度 */
-const MAX_LEVEL = 5;
-
-/** 悬浮编辑按钮距离顶部最小距离 */
-const FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE = 105;
-
-/** 悬浮编辑按钮距离顶部最大距离 */
-const FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE = 500;
-
-/** 悬浮编辑按钮距离底部最小距离 */
-const FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE = 50;
-
-/** 悬浮编辑按钮距离底部最大距离 */
-const FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE = 300;
-
-/** 工具栏按钮图标 SVG */
-const ICON =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22"><path fill="currentColor" d="M3 14V9h8v5zm0-7V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v2zm2 14q-.825 0-1.412-.587T3 19v-3h8v5zm8-7V9h8v2.3q-.95-.425-2.025-.25t-1.875.975L15.125 14zm0 8v-3.075l5.525-5.5q.225-.225.5-.325t.55-.1q.3 0 .575.113t.5.337l.925.925q.2.225.313.5t.112.55t-.1.563t-.325.512l-5.5 5.5zm6.575-5.6l.925-.975l-.925-.925l-.95.95z"/></svg>';
+// ============================================================================
+// 配置常量
+// ============================================================================
 
 /**
- * 简单并发控制函数，限制同时运行的 Promise 数量
- * @param {Array} items 待处理项
- * @param {Function} handler 处理函数，接收每一项，返回 Promise
- * @param {number} concurrency 最大并发数
- * @returns {Promise<Array>} 所有处理结果
+ * 插件全局配置常量
+ * @constant {Object}
+ * @property {string} STORAGE_NAME - 存储配置的键名
+ * @property {number} MAX_COUNT - 最大允许拼接的子文档数量上限
+ * @property {number} MAX_LEVEL - 最大允许递归层级上限
+ * @property {number} RENDER_DEBOUNCE_MS - 渲染稳定判断的防抖延迟（毫秒）
+ * @property {number} RENDER_TIMEOUT_MS - 渲染最大等待超时（毫秒）
+ * @property {number} CONCURRENCY_LIMIT - 并发渲染子文档的数量
+ * @property {Object} FLOATING_EDIT_BUTTON - 浮动编辑按钮的边界限制
+ * @property {Object} DEFAULT_CONFIG - 默认配置值
+ * @property {Object} API - 思源笔记 API 路径
+ * @property {Object} EVENTS - 事件总线事件名
+ * @property {Object} SELECTORS - 需要监听滚动的容器选择器
+ * @property {string} ICON - 开关按钮图标 SVG
+ * @property {Object} CSS_CLASSES - 插件使用的 CSS 类名（无后缀基类）
+ * @property {Object} ATTRIBUTES - 自定义数据属性名
  */
-async function pLimit(items, handler, concurrency = 5) {
+const CONFIG = {
+  STORAGE_NAME: "concat-subdocs",
+  MAX_COUNT: 500,
+  MAX_LEVEL: 5,
+  RENDER_DEBOUNCE_MS: 100,
+  RENDER_TIMEOUT_MS: 2000,
+  CONCURRENCY_LIMIT: 5,
+
+  FLOATING_EDIT_BUTTON: {
+    TOP: { MIN: 105, MAX: 500 },
+    BOTTOM: { MIN: 50, MAX: 300 },
+  },
+
+  DEFAULT_CONFIG: {
+    maxLevel: 1,
+    maxCount: 10,
+    floatingEditButtonTopDistance: 105,
+    floatingEditButtonBottomDistance: 55,
+    floatingEditButtonDirection: "right",
+    showSubDocTitle: true,
+  },
+
+  API: {
+    GET_BLOCK_ATTRS: "/api/attr/getBlockAttrs",
+    SET_BLOCK_ATTRS: "/api/attr/setBlockAttrs",
+    GET_BLOCK_INFO: "/api/block/getBlockInfo",
+    GET_DOC: "/api/filetree/getDoc",
+    EXPORT_MD: "/api/export/exportMdContent",
+    LIST_DOCS: "/api/filetree/listDocsByPath",
+    QUERY_SQL: "/api/query/sql",
+  },
+
+  EVENTS: {
+    PROTYLE_DYNAMIC: "loaded-protyle-dynamic",
+    PROTYLE_STATIC: "loaded-protyle-static",
+    UNLOAD_DOC: "unload-doc",
+    WS_MAIN: "ws-main",
+  },
+
+  SELECTORS: {
+    SCROLL_CONTAINERS: [
+      ".fn__flex-1",
+      ".protyle",
+      ".layout__tab-content",
+      ".fn__flex-column",
+    ],
+  },
+
+  ICON: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22"><path fill="currentColor" d="M3 14V9h8v5zm0-7V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v2zm2 14q-.825 0-1.412-.587T3 19v-3h8v5zm8-7V9h8v2.3q-.95-.425-2.025-.25t-1.875.975L15.125 14zm0 8v-3.075l5.525-5.5q.225-.225.5-.325t.55-.1q.3 0 .575.113t.5.337l.925.925q.2.225.313.5t.112.55t-.1.563t-.325.512l-5.5 5.5zm6.575-5.6l.925-.975l-.925-.925l-.95.95z"/>',
+
+  CSS_CLASSES: {
+    CONTAINER: "concat-subdocs-container",
+    SUBDOC_ITEM: "concat-subdoc-item",
+    SUBDOC_CONTENT: "concat-subdoc-content",
+    EDIT_LINK: "concat-edit-link",
+    TOGGLE_BUTTON: "concat-toggle-button",
+    TOGGLE_ENABLED: "concat-enabled",
+    MAIN_DOC_EDITOR: "concat-maindoc-editor",
+  },
+
+  ATTRIBUTES: {
+    CONCAT_STATE: "custom-concat",
+    DOC_ID: "data-doc-id",
+    SUBDOC_ID: "data-subdoc-id",
+    NODE_ID: "data-node-id",
+  },
+};
+
+// ============================================================================
+// 工具函数
+// ============================================================================
+
+/**
+ * 并发限制函数，控制同时执行的异步任务数量
+ * @template T
+ * @param {Array} items - 待处理的数据项数组
+ * @param {Function} handler - 处理每个数据项的异步函数，接收一个参数 item
+ * @param {number} concurrency - 最大并发数，默认 5
+ * @returns {Promise<Array<T>>} 所有任务执行结果的数组
+ */
+async function pLimit(items, handler, concurrency = CONFIG.CONCURRENCY_LIMIT) {
   const results = [];
   const executing = new Set();
+
   for (const item of items) {
     const p = Promise.resolve().then(() => handler(item));
     results.push(p);
+
     const e = p.then(() => executing.delete(e));
     executing.add(e);
+
     if (executing.size >= concurrency) {
       await Promise.race(executing);
     }
   }
+
   return Promise.all(results);
 }
 
 /**
- * 子文档拼接插件主类
- * 功能：将当前文档的子文档内容拼接显示在主文档下方
- * @extends Plugin
+ * 防抖函数，延迟执行直到连续调用停止
+ * @param {Function} func - 需要防抖的函数
+ * @param {number} wait - 等待时间（毫秒）
+ * @returns {Function} 防抖后的函数
  */
-module.exports = class ConcatSubDocsPlugin extends Plugin {
+function debounce(func, wait) {
+  let timeout;
+
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+/**
+ * 生成带有文档 ID 后缀的 CSS 类名，用于隔离不同文档的样式
+ * @param {string} baseClass - 基础类名（来自 CONFIG.CSS_CLASSES）
+ * @param {string} docId - 文档 ID
+ * @returns {string} 带后缀的类名
+ */
+function getDocScopedClass(baseClass, docId) {
+  return `${baseClass}--${docId}`;
+}
+
+// ============================================================================
+// 服务类 - API 服务
+// ============================================================================
+
+/**
+ * API 服务类，封装对思源笔记后端接口的调用
+ */
+class ApiService {
   /**
-   * 插件加载时初始化
-   * - 加载配置
-   * - 初始化数据结构
-   * - 注册事件监听
-   * - 初始化设置面板
-   * @returns {Promise<void>}
+   * 通用 API 调用方法
+   * @param {string} url - 接口路径（相对于思源服务地址）
+   * @param {Object} data - 请求体数据
+   * @returns {Promise<Object>} 接口返回的 data 字段
+   * @throws {Error} 网络错误或业务错误
    */
-  async onload() {
-    await this.loadConfig(); // 加载配置
-    this.concatContainers = new Map(); // 存储主文档 ID 与拼接容器的映射
-    this.subdocElements = new Map(); // 存储子文档 ID 与其 DOM 元素的映射，用于快速更新
-    this.lastToggleTime = 0; // 上次切换时间戳，用于防抖
-
-    // 存储清理函数，用于卸载时移除事件监听
-    this.cleanupFunctions = [];
-    // 性能优化：存储当前鼠标 Y 坐标（未使用，但保留框架）
-    this.currentMouseY = 0;
-    this.rafId = null; // requestAnimationFrame ID，用于动画帧调度
-
-    // 初始化设置面板
-    this.setting = new Setting({
-      confirmCallback: async () => {
-        await this.saveConfig();
-      },
-      destroyCallback: async () => {
-        // 点取消时重新加载配置，以防用户修改了参数但未保存直接退出，导致内存配置与配置文件不一致
-        await this.loadConfig();
-      },
+  async callApi(url, data) {
+    const response = await fetch(url, {
+      method: "POST",
+      body: JSON.stringify(data),
     });
 
-    // 添加设置项：清除所有拼接状态
-    this.setting.addItem({
-      title: this.i18n.clearStatesTitle,
-      description: this.i18n.clearStatesDesc,
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+      const json = JSON.parse(text);
+      if (json.code !== 0) {
+        throw new Error(json.msg);
+      }
+      return json.data;
+    } catch (e) {
+      console.error("API 解析失败", url, e);
+      throw e;
+    }
+  }
+
+  /**
+   * 获取块属性
+   * @param {string} blockId - 块 ID
+   * @returns {Promise<Object>} 属性对象
+   */
+  async getBlockAttrs(blockId) {
+    return this.callApi(CONFIG.API.GET_BLOCK_ATTRS, { id: blockId });
+  }
+
+  /**
+   * 设置块属性
+   * @param {string} blockId - 块 ID
+   * @param {Object} attrs - 要设置的属性键值对
+   * @returns {Promise<Object>}
+   */
+  async setBlockAttrs(blockId, attrs) {
+    return this.callApi(CONFIG.API.SET_BLOCK_ATTRS, { id: blockId, attrs });
+  }
+
+  /**
+   * 获取块基本信息（所在笔记本、路径等）
+   * @param {string} blockId - 块 ID
+   * @returns {Promise<Object|null>}
+   */
+  async getBlockInfo(blockId) {
+    try {
+      return await this.callApi(CONFIG.API.GET_BLOCK_INFO, { id: blockId });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 获取文档的完整数据（包含内容）
+   * @param {string} docId - 文档块 ID
+   * @returns {Promise<Object>}
+   */
+  async getDoc(docId) {
+    return this.callApi(CONFIG.API.GET_DOC, { id: docId });
+  }
+
+  /**
+   * 导出文档为 Markdown 格式
+   * @param {string} docId - 文档块 ID
+   * @returns {Promise<Object>} 包含 content 字段的 Markdown 内容
+   */
+  async exportMd(docId) {
+    return this.callApi(CONFIG.API.EXPORT_MD, { id: docId });
+  }
+
+  /**
+   * 列出指定路径下的文档（直接子文档）
+   * @param {string} notebook - 笔记本 ID
+   * @param {string} path - 父文档路径
+   * @returns {Promise<Object>} 包含 files 数组的响应
+   */
+  async listDocs(notebook, path) {
+    return this.callApi(CONFIG.API.LIST_DOCS, { notebook, path });
+  }
+
+  /**
+   * 执行 SQL 查询
+   * @param {string} stmt - SQL 语句
+   * @returns {Promise<Array>} 查询结果数组
+   */
+  async querySql(stmt) {
+    return this.callApi(CONFIG.API.QUERY_SQL, { stmt });
+  }
+}
+
+// ============================================================================
+// 服务类 - 块服务
+// ============================================================================
+
+/**
+ * 块服务类，处理与文档块相关的属性读写和元素查找
+ */
+class BlockService {
+  /**
+   * @param {ApiService} apiService - API 服务实例
+   */
+  constructor(apiService) {
+    this.api = apiService;
+  }
+
+  /**
+   * 获取文档的拼接状态（是否启用拼接）
+   * @param {string} docId - 文档块 ID
+   * @returns {Promise<boolean>}
+   */
+  async getConcatState(docId) {
+    try {
+      const attrs = await this.api.getBlockAttrs(docId);
+      return attrs[CONFIG.ATTRIBUTES.CONCAT_STATE] === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 设置文档的拼接状态
+   * @param {string} docId - 文档块 ID
+   * @param {boolean} state - true 启用拼接，false 禁用
+   * @returns {Promise<void>}
+   */
+  async setConcatState(docId, state) {
+    try {
+      await this.api.setBlockAttrs(docId, {
+        [CONFIG.ATTRIBUTES.CONCAT_STATE]: state ? "true" : "false",
+      });
+    } catch (e) {
+      console.error(`设置文档 ${docId} 拼接状态失败`, e);
+    }
+  }
+
+  /**
+   * 从 Protyle 的 DOM 元素中提取当前文档的 ID
+   * @param {Element} protyleElement - Protyle 的根元素
+   * @returns {string|null}
+   */
+  getDocIdFromElement(protyleElement) {
+    const rootBlock = protyleElement.querySelector(
+      `[${CONFIG.ATTRIBUTES.NODE_ID}]`,
+    );
+    return rootBlock ? rootBlock.getAttribute(CONFIG.ATTRIBUTES.NODE_ID) : null;
+  }
+}
+
+// ============================================================================
+// 服务类 - 文档服务
+// ============================================================================
+
+/**
+ * 文档服务类，负责获取子文档、渲染内容等
+ */
+class DocumentService {
+  /**
+   * @param {ApiService} apiService - API 服务实例
+   * @param {Plugin} plugin - 插件主实例（用于获取 app）
+   */
+  constructor(apiService, plugin) {
+    this.api = apiService;
+    this.plugin = plugin;
+  }
+
+  /**
+   * 获取指定文档的直接子文档（第一级）
+   * 优先使用 listDocsByPath API，失败后降级为 SQL 查询
+   * @param {string} parentDocId - 父文档 ID
+   * @returns {Promise<Array<{id: string, name: string, path: string}>>}
+   */
+  async getSubDocs(parentDocId) {
+    try {
+      const parentDoc = await this.api.getBlockInfo(parentDocId);
+      if (!parentDoc) return [];
+
+      const data = await this.api.listDocs(parentDoc.box, parentDoc.path);
+
+      if (data && data.files && Array.isArray(data.files)) {
+        return data.files.map((file) => ({
+          id: file.id,
+          name: file.name.replace(/\.sy$/, ""),
+          path: file.path,
+        }));
+      }
+    } catch (e) {
+      console.warn("listDocsByPath 失败，降级为 SQL 排序", e);
+    }
+
+    return this.getSubDocsBySql(parentDocId);
+  }
+
+  /**
+   * 使用 SQL 查询获取直接子文档（备用方案）
+   * @param {string} parentDocId - 父文档 ID
+   * @returns {Promise<Array>}
+   */
+  async getSubDocsBySql(parentDocId) {
+    try {
+      const parentDoc = await this.api.getBlockInfo(parentDocId);
+      if (!parentDoc) return [];
+
+      const parentDir = parentDoc.path.replace(/\.sy$/, "");
+      const escapedParentDir = parentDir.replace(/'/g, "''");
+
+      const sql = `
+        SELECT id, name, path
+        FROM blocks
+        WHERE path LIKE '${escapedParentDir}/%'
+        AND type = 'd'
+        AND path NOT LIKE '${escapedParentDir}/%/%'
+        ORDER BY sort ASC
+      `;
+
+      const result = await this.api.querySql(sql);
+
+      if (result && result.length > 0) {
+        return result.map((row) => ({
+          id: row.id,
+          name: row.name || "",
+          path: row.path,
+        }));
+      }
+    } catch (e) {
+      console.error("获取子文档失败", e);
+    }
+
+    return [];
+  }
+
+  /**
+   * 递归获取指定文档的所有子文档（按层级限制）
+   * @param {string} parentDocId - 父文档 ID
+   * @param {number} currentLevel - 当前层级（内部递归用）
+   * @param {number} maxLevel - 最大允许层级
+   * @returns {Promise<Array>} 所有符合条件的子文档数组
+   */
+  async getAllSubDocs(parentDocId, currentLevel = 1, maxLevel = 1) {
+    if (maxLevel > 0 && currentLevel > maxLevel) {
+      return [];
+    }
+
+    const result = [];
+    const directSubs = await this.getSubDocs(parentDocId);
+
+    for (const sub of directSubs) {
+      result.push(sub);
+      const descendants = await this.getAllSubDocs(
+        sub.id,
+        currentLevel + 1,
+        maxLevel,
+      );
+      result.push(...descendants);
+    }
+
+    return result;
+  }
+
+  /**
+   * 临时渲染子文档，返回渲染后的 HTML（渲染完成后 Protyle 被销毁）
+   * @param {string} subDocId 子文档 ID
+   * @returns {Promise<string>}
+   */
+  async renderSubDocHtml(subDocId) {
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      let protyle = null;
+      let observer = null;
+      let debounceTimeoutId = null;
+      let maxTimeoutId = null;
+
+      // 创建隐藏挂载点（移出视口，不影响布局）
+      const mountPoint = document.createElement("div");
+      mountPoint.style.position = "absolute";
+      mountPoint.style.left = "-9999px";
+      mountPoint.style.top = "0";
+      mountPoint.style.width = "1px";
+      mountPoint.style.height = "1px";
+      mountPoint.style.overflow = "hidden";
+      document.body.appendChild(mountPoint);
+
+      // 统一的清理与结束函数
+      const finish = (html, isError = false) => {
+        if (resolved) return;
+        resolved = true;
+
+        if (observer) observer.disconnect();
+        clearTimeout(debounceTimeoutId);
+        clearTimeout(maxTimeoutId);
+
+        try {
+          protyle?.destroy();
+        } catch (e) {
+          // 忽略销毁错误
+        }
+        mountPoint.remove();
+
+        if (isError) {
+          reject(html); // 此处 html 实际为 error 对象
+        } else {
+          resolve(html);
+        }
+      };
+
+      try {
+        // 创建 Protyle 实例（只读模式，根据配置决定是否显示内置标题）
+        protyle = new Protyle(this.plugin.app, mountPoint, {
+          blockId: subDocId,
+          rootId: subDocId,
+          mode: "wysiwyg",
+          title: this.plugin.config.showSubDocTitle || false,
+          editor: {
+            readonly: true,
+          },
+          typewriterMode: false,
+          autoFocus: false,
+          render: {
+            background: false,
+            title: this.plugin.config.showSubDocTitle || false,
+            titleShowTop: false,
+            hideTitleOnZoom: false,
+            gutter: false,
+            scroll: false,
+            breadcrumb: false,
+            breadcrumbDocName: false,
+          },
+        });
+      } catch (e) {
+        finish(e, true);
+        return;
+      }
+
+      // 使用 MutationObserver 检测渲染稳定（监听子节点变化）
+      observer = new MutationObserver(() => {
+        clearTimeout(debounceTimeoutId);
+        debounceTimeoutId = setTimeout(() => {
+          const html = mountPoint.innerHTML;
+          finish(html);
+        }, CONFIG.RENDER_DEBOUNCE_MS);
+      });
+
+      observer.observe(mountPoint, {
+        childList: true,
+        subtree: true,
+      });
+
+      // 设置最大超时，防止无限等待
+      maxTimeoutId = setTimeout(() => {
+        const html = mountPoint.innerHTML;
+        finish(html);
+      }, CONFIG.RENDER_TIMEOUT_MS);
+    });
+  }
+
+  /**
+   * 在新标签页中打开指定文档（思源内部链接）
+   * @param {string} docId - 文档 ID
+   */
+  openDocument(docId) {
+    window.open(`siyuan://blocks/${docId}`, "_blank");
+  }
+}
+
+// ============================================================================
+// 服务类 - 状态服务
+// ============================================================================
+
+/**
+ * 状态服务类，处理批量清除拼接状态等全局操作
+ */
+class StateService {
+  /**
+   * @param {Plugin} plugin - 插件主实例
+   * @param {BlockService} blockService - 块服务实例
+   */
+  constructor(plugin, blockService) {
+    this.plugin = plugin;
+    this.blockService = blockService;
+  }
+
+  /**
+   * 清除所有文档的拼接状态（即关闭所有已启用的拼接）
+   * @returns {Promise<void>}
+   */
+  async clearAllConcatStates() {
+    if (!confirm(this.plugin.i18n.clearConfirm)) return;
+
+    showMessage(this.plugin.i18n.clearing, 5000);
+
+    try {
+      const sql = "SELECT id FROM blocks WHERE type = 'd'";
+      const result = await this.plugin.callApi(CONFIG.API.QUERY_SQL, {
+        stmt: sql,
+      });
+
+      if (!result || !Array.isArray(result) || result.length === 0) {
+        showMessage(this.plugin.i18n.noDocFound, 3000, "info");
+        return;
+      }
+
+      const docIds = result.map((row) => row.id);
+      let processed = 0;
+
+      await pLimit(
+        docIds,
+        async (id) => {
+          try {
+            await this.blockService.setConcatState(id, false);
+            processed++;
+          } catch (e) {
+            console.error(`设置文档 ${id} 属性失败`, e);
+          }
+        },
+        10,
+      );
+
+      this.cleanupCurrentTabs();
+      showMessage(
+        this.plugin.i18n.clearSuccess.replace(/\{count\}/g, processed),
+        5000,
+      );
+    } catch (e) {
+      console.error("清除拼接状态失败", e);
+      showMessage(this.plugin.i18n.clearFail, 5000, "error");
+    }
+  }
+
+  /**
+   * 清理当前所有已打开标签页中插入的拼接容器
+   */
+  cleanupCurrentTabs() {
+    if (this.plugin.app && this.plugin.app.workspace) {
+      for (const tab of this.plugin.app.workspace.tabs) {
+        const docId = tab.model?.documentId;
+        if (docId && this.plugin.concatContainers.has(docId)) {
+          const data = this.plugin.concatContainers.get(docId);
+          if (data && data.container) data.container.remove();
+          this.plugin.concatContainers.delete(docId);
+        }
+      }
+    }
+  }
+}
+
+// ============================================================================
+// 服务类 - UI 组件服务
+// ============================================================================
+
+/**
+ * UI 组件服务类，负责创建和操作 DOM 元素
+ */
+class ComponentService {
+  /**
+   * @param {Plugin} plugin - 插件主实例
+   */
+  constructor(plugin) {
+    this.plugin = plugin;
+  }
+
+  /**
+   * 创建用于包裹所有子文档的外部容器
+   * @param {string} docId - 当前主文档 ID
+   * @param {HTMLElement} editorElement - 主文档编辑器元素（.protyle-wysiwyg）
+   * @returns {HTMLDivElement}
+   */
+  createConcatContainer(docId, editorElement) {
+    const containerClass = getDocScopedClass(CONFIG.CSS_CLASSES.CONTAINER, docId);
+    const container = document.createElement("div");
+    container.className = CONFIG.CSS_CLASSES.CONTAINER + " " + containerClass;
+    container.setAttribute(CONFIG.ATTRIBUTES.DOC_ID, docId);
+    container.contentEditable = "false";
+    container.style.cssText = editorElement.style.cssText;
+
+    const mainDocEditorClass = getDocScopedClass(CONFIG.CSS_CLASSES.MAIN_DOC_EDITOR, docId);
+    const style = document.createElement("style");
+    style.textContent = `
+      .${mainDocEditorClass} {
+        padding-bottom: ${editorElement.style.paddingTop || "0px"}!important;
+      }
+      .${containerClass} { 
+        padding: 0 0 ${editorElement.style.paddingBottom}!important;
+      }
+    `;
+    container.appendChild(style);
+
+    return container;
+  }
+
+  /**
+   * 创建单个子文档的展示容器（包含内容和编辑链接）
+   * @param {Object} subDoc - 子文档对象，包含 id, name
+   * @param {HTMLElement} editorElement - 主文档编辑器元素（用于继承样式）
+   * @returns {HTMLDivElement}
+   */
+  createSubDocContainer(subDoc, editorElement) {
+    const subDocContainer = document.createElement("div");
+    subDocContainer.classList.add(
+      "protyle-wysiwyg",
+      CONFIG.CSS_CLASSES.SUBDOC_ITEM,
+      "protyle-custom",
+    );
+    subDocContainer.setAttribute(CONFIG.ATTRIBUTES.SUBDOC_ID, subDoc.id);
+    subDocContainer.style.cssText = editorElement.style.cssText;
+    subDocContainer.style.paddingBottom = editorElement.style.paddingTop;
+
+    this.appendContentSection(subDocContainer, editorElement);
+    this.appendEditLink(subDocContainer, subDoc);
+
+    return subDocContainer;
+  }
+
+  /**
+   * 添加内容区域（初始为空，后续填充 HTML）
+   * @param {HTMLElement} container - 子文档容器
+   * @param {HTMLElement} editorElement - 主文档编辑器元素
+   * @private
+   */
+  appendContentSection(container, editorElement) {
+    const contentDiv = document.createElement("div");
+    contentDiv.className = `${CONFIG.CSS_CLASSES.SUBDOC_CONTENT} protyle-wysiwyg protyle-wysiwyg--attr`;
+    contentDiv.contentEditable = "false";
+    container.appendChild(contentDiv);
+  }
+
+  /**
+   * 添加编辑链接（跳转到子文档）
+   * @param {HTMLElement} container - 子文档容器
+   * @param {Object} subDoc - 子文档对象
+   * @private
+   */
+  appendEditLink(container, subDoc) {
+    const editLink = document.createElement("span");
+    editLink.className = CONFIG.CSS_CLASSES.EDIT_LINK;
+    editLink.setAttribute("data-type", "block-ref");
+    editLink.setAttribute("data-id", subDoc.id);
+    editLink.title = this.plugin.i18n.editLinkTitle;
+    editLink.innerHTML =
+      '<svg class="icon"><use xlink:href="#iconEdit"></use></svg>';
+
+    container.appendChild(editLink);
+  }
+
+  /**
+   * 递归设置元素及其所有子元素为不可编辑（contentEditable = false）
+   * @param {HTMLElement} element - 目标元素
+   * @param {string} value - 要设置的值，默认为 "false"
+   */
+  setContentEditable(element, value = "false") {
+    const allElements = element.querySelectorAll("*");
+    allElements.forEach((el) => {
+      el.contentEditable = value;
+    });
+  }
+
+  /**
+   * 在文档标题栏创建/更新拼接开关按钮
+   * @param {Object} protyle - Protyle 实例
+   * @param {boolean} enabled - 当前是否启用拼接
+   * @param {string} docId - 当前文档 ID
+   */
+  createToggleButton(protyle, enabled, docId) {
+    if (!protyle?.breadcrumb?.element) {
+      return;
+    }
+    const breadcrumbBar = protyle.breadcrumb.element;
+    const breadcrumbSpace = breadcrumbBar.nextElementSibling;
+
+    if (
+      breadcrumbSpace &&
+      breadcrumbSpace.matches(".protyle-breadcrumb__space")
+    ) {
+      this.removeExistingButton(breadcrumbSpace);
+
+      const toggleButton = document.createElement("button");
+      toggleButton.innerHTML = CONFIG.ICON;
+      toggleButton.className = `block__icon fn__flex-center ariaLabel ${CONFIG.CSS_CLASSES.TOGGLE_BUTTON} ${enabled ? CONFIG.CSS_CLASSES.TOGGLE_ENABLED : ""}`;
+      toggleButton.ariaLabel = this.plugin.i18n.toggleTitle;
+
+      toggleButton.onclick = async () => {
+        await this.plugin.toggleConcatForCurrentDoc(toggleButton, docId);
+        const newEnabled = await this.plugin.blockService.getConcatState(docId);
+        toggleButton.classList.toggle(
+          CONFIG.CSS_CLASSES.TOGGLE_ENABLED,
+          newEnabled,
+        );
+      };
+
+      breadcrumbSpace.insertAdjacentElement("afterend", toggleButton);
+    }
+  }
+
+  /**
+   * 移除已存在的开关按钮
+   * @param {HTMLElement} breadcrumbSpace - 面包屑后面的空白元素
+   * @private
+   */
+  removeExistingButton(breadcrumbSpace) {
+    const existing = breadcrumbSpace.nextElementSibling;
+    if (existing && existing.matches(`.${CONFIG.CSS_CLASSES.TOGGLE_BUTTON}`)) {
+      existing.remove();
+    }
+  }
+
+  /**
+   * 移除所有已插入的拼接容器并清空映射
+   * @param {Map} concatContainers - 文档 ID 到容器数据的映射
+   * @param {Map} subdocElements - 子文档 ID 到 DOM 元素的映射
+   */
+  removeAllContainers(concatContainers, subdocElements) {
+    for (const docId of concatContainers.keys()) {
+      const data = concatContainers.get(docId);
+      data.container?.parentNode?.removeChild(data.container);
+      concatContainers.delete(docId);
+    }
+    subdocElements.clear();
+  }
+}
+
+// ============================================================================
+// 服务类 - 位置服务
+// ============================================================================
+
+/**
+ * 位置服务类，负责计算并更新子文档右侧浮动编辑按钮的位置
+ */
+class PositionService {
+  /**
+   * @param {Plugin} plugin - 插件主实例
+   */
+  constructor(plugin) {
+    this.plugin = plugin;
+  }
+
+  /**
+   * 更新所有可见子文档的浮动编辑按钮位置（由滚动、窗口大小改变等触发）
+   */
+  updatePositions() {
+    const viewportHeight = window.innerHeight;
+    const topSafe = this.plugin.config.floatingEditButtonTopDistance;
+    const bottomSafe = this.plugin.config.floatingEditButtonBottomDistance;
+    const leftDir = this.plugin.config.floatingEditButtonDirection === "left";
+    const safePadding = 1;
+    const verticalMargin = 14;
+
+    const containers = document.querySelectorAll(".concat-subdoc-item");
+
+    containers.forEach((container) => {
+      const editLink = container.querySelector(".concat-edit-link");
+      if (!editLink) return;
+
+      const protyle = container.closest(".protyle");
+      if (!protyle) return;
+
+      this.updateSinglePosition(
+        container,
+        editLink,
+        protyle,
+        viewportHeight,
+        topSafe,
+        bottomSafe,
+        leftDir,
+        safePadding,
+        verticalMargin,
+      );
+    });
+  }
+
+  /**
+   * 更新单个编辑按钮的位置
+   * @param {HTMLElement} container - 子文档容器
+   * @param {HTMLElement} editLink - 编辑链接元素
+   * @param {HTMLElement} protyle - 父级 Protyle 容器
+   * @param {number} viewportHeight - 视口高度
+   * @param {number} topSafe - 顶部安全距离
+   * @param {number} bottomSafe - 底部安全距离
+   * @param {boolean} leftDir - 是否优先靠左显示
+   * @param {number} safePadding - 额外内边距
+   * @param {number} verticalMargin - 垂直方向边距
+   * @private
+   */
+  updateSinglePosition(
+    container,
+    editLink,
+    protyle,
+    viewportHeight,
+    topSafe,
+    bottomSafe,
+    leftDir,
+    safePadding,
+    verticalMargin,
+  ) {
+    const protyleRect = protyle.getBoundingClientRect();
+    let visualTop = protyleRect.top;
+
+    const breadcrumb = protyle.querySelector(".protyle-breadcrumb");
+    if (breadcrumb) {
+      const breadcrumbRect = breadcrumb.getBoundingClientRect();
+      visualTop = Math.max(visualTop, breadcrumbRect.bottom);
+    }
+
+    const effectiveTop = Math.max(visualTop, topSafe) + safePadding;
+    const protyleContentBottom = protyleRect.top + protyle.clientHeight;
+    const effectiveBottom =
+      Math.min(protyleContentBottom, viewportHeight - bottomSafe) - safePadding;
+
+    if (effectiveTop >= effectiveBottom) return;
+
+    const editLinkRect = editLink.getBoundingClientRect();
+    const editLinkWidth = editLinkRect.width;
+    const editLinkHeight = editLinkRect.height;
+
+    const containerRect = container.getBoundingClientRect();
+    const containerTop = containerRect.top;
+    const containerHeight = containerRect.height;
+    const containerBottom = containerRect.bottom;
+
+    this.setHorizontalPosition(editLink, container, editLinkWidth, leftDir);
+    this.setVerticalPosition(
+      editLink,
+      container,
+      containerTop,
+      containerBottom,
+      containerHeight,
+      effectiveTop,
+      effectiveBottom,
+      editLinkHeight,
+      viewportHeight,
+      verticalMargin,
+      topSafe,
+    );
+  }
+
+  /**
+   * 设置按钮的水平位置（根据配置向左或向右浮动）
+   * @param {HTMLElement} editLink - 编辑链接元素
+   * @param {HTMLElement} container - 子文档容器
+   * @param {number} editLinkWidth - 编辑链接宽度
+   * @param {boolean} leftDir - 是否优先靠左
+   * @private
+   */
+  setHorizontalPosition(editLink, container, editLinkWidth, leftDir) {
+    const containerPaddingLeft = parseInt(container.style.paddingLeft) || 0;
+    const containerPaddingRight = parseInt(container.style.paddingRight) || 0;
+
+    if (leftDir && containerPaddingLeft > 1.2 * editLinkWidth) {
+      editLink.style.right = "auto";
+      editLink.style.left = `${containerPaddingLeft - 1.2 * editLinkWidth}px`;
+    } else if (!leftDir && containerPaddingRight > 1.2 * editLinkWidth) {
+      editLink.style.left = "auto";
+      editLink.style.right = `${containerPaddingRight - 1.2 * editLinkWidth}px`;
+    } else {
+      editLink.style.left = `${containerPaddingLeft}px`;
+      editLink.style.right = "auto";
+    }
+  }
+
+  /**
+   * 设置按钮的垂直位置（考虑可见区域自动调整）
+   * @param {HTMLElement} editLink - 编辑链接元素
+   * @param {HTMLElement} container - 子文档容器
+   * @param {number} containerTop - 容器顶部位置（相对于视口）
+   * @param {number} containerBottom - 容器底部位置
+   * @param {number} containerHeight - 容器高度
+   * @param {number} effectiveTop - 有效可视区域顶部（绝对）
+   * @param {number} effectiveBottom - 有效可视区域底部（绝对）
+   * @param {number} editLinkHeight - 编辑链接高度
+   * @param {number} viewportHeight - 视口高度
+   * @param {number} verticalMargin - 垂直边距
+   * @param {number} topSafe - 顶部安全距离（fallback）
+   * @private
+   */
+  setVerticalPosition(
+    editLink,
+    container,
+    containerTop,
+    containerBottom,
+    containerHeight,
+    effectiveTop,
+    effectiveBottom,
+    editLinkHeight,
+    viewportHeight,
+    verticalMargin,
+    topSafe,
+  ) {
+    if (containerBottom < effectiveTop || containerTop > effectiveBottom) {
+      editLink.style.transform = `translateY(${topSafe}px)`;
+      return;
+    }
+
+    const visibleTopInContainer = Math.max(0, effectiveTop - containerTop);
+    const visibleBottomInContainer = Math.min(
+      containerHeight,
+      effectiveBottom - containerTop,
+    );
+
+    let minTop = visibleTopInContainer + verticalMargin;
+    let maxTop = visibleBottomInContainer - editLinkHeight - verticalMargin;
+
+    if (minTop > maxTop) {
+      minTop = visibleTopInContainer;
+      maxTop = visibleBottomInContainer - editLinkHeight;
+    }
+
+    minTop = Math.max(0, Math.min(minTop, containerHeight - editLinkHeight));
+    maxTop = Math.max(0, Math.min(maxTop, containerHeight - editLinkHeight));
+
+    if (minTop > maxTop) {
+      editLink.style.transform = `translateY(${topSafe}px)`;
+      return;
+    }
+
+    const preferTop = this.shouldPreferTop(
+      containerTop,
+      containerBottom,
+      viewportHeight,
+    );
+    let finalTop = preferTop ? minTop : maxTop;
+    finalTop = Math.max(minTop, Math.min(maxTop, finalTop));
+
+    editLink.style.transform = `translateY(${finalTop}px)`;
+  }
+
+  /**
+   * 判断按钮应优先靠近顶部还是底部
+   * @param {number} containerTop - 容器顶部位置
+   * @param {number} containerBottom - 容器底部位置
+   * @param {number} viewportHeight - 视口高度
+   * @returns {boolean} true 表示优先顶部，false 表示优先底部
+   * @private
+   */
+  shouldPreferTop(containerTop, containerBottom, viewportHeight) {
+    const viewportCenterY = viewportHeight / 2;
+
+    if (containerTop < 0 && containerBottom > viewportHeight) {
+      return false;
+    } else if (containerBottom < viewportCenterY) {
+      return true;
+    } else if (containerTop > viewportCenterY) {
+      return false;
+    } else {
+      const distTop = viewportCenterY - containerTop;
+      const distBottom = containerBottom - viewportCenterY;
+      return distTop > distBottom;
+    }
+  }
+}
+
+// ============================================================================
+// 服务类 - 设置面板服务
+// ============================================================================
+
+/**
+ * 设置面板服务类，负责构建插件的设置界面
+ */
+class SettingsService {
+  /**
+   * @param {Plugin} plugin - 插件主实例
+   */
+  constructor(plugin) {
+    this.plugin = plugin;
+  }
+
+  /**
+   * 初始化设置面板
+   */
+  init() {
+    this.plugin.setting = new Setting({
+      confirmCallback: async () => await this.plugin.saveConfig(),
+      destroyCallback: async () => await this.plugin.loadConfig(),
+    });
+
+    this.addSettingItems();
+  }
+
+  /**
+   * 添加所有设置项
+   * @private
+   */
+  addSettingItems() {
+    this.plugin.setting.addItem(this.createClearStateSetting());
+    this.plugin.setting.addItem(this.createMaxLevelSetting());
+    this.plugin.setting.addItem(this.createMaxCountSetting());
+    this.plugin.setting.addItem(this.createFloatingTopDistanceSetting());
+    this.plugin.setting.addItem(this.createFloatingBottomDistanceSetting());
+    this.plugin.setting.addItem(this.createShowSubDocTitleSetting());
+    this.plugin.setting.addItem(this.createFloatingDirectionSetting());
+  }
+
+  /**
+   * 创建“清除所有拼接状态”按钮项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createClearStateSetting() {
+    return {
+      title: this.plugin.i18n.clearStatesTitle,
+      description: this.plugin.i18n.clearStatesDesc,
       createActionElement: () => {
         const button = document.createElement("button");
         button.className = "b3-button b3-button--outline";
-        button.textContent = this.i18n.clearStatesTitle;
-        button.addEventListener("click", () => this.clearAllConcatStates());
+        button.textContent = this.plugin.i18n.clearStatesTitle;
+        button.addEventListener("click", () =>
+          this.plugin.stateService.clearAllConcatStates(),
+        );
         return button;
       },
-    });
+    };
+  }
 
-    // 添加设置项：拼接文档最大层级
-    this.setting.addItem({
-      title: this.i18n.maxLevelTitle,
-      description: this.i18n.maxLevelDesc.replace(/\{maxLevel\}/g, MAX_LEVEL),
-      direction: "row",
-      createActionElement: () => {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.className = "b3-text-field";
-        input.style.width = "100px";
-        input.value = this.config.maxLevel;
-        input.min = 1;
-        input.max = MAX_LEVEL;
-        input.step = 1;
-        input.addEventListener("change", () => {
-          const val = parseInt(input.value, 10);
-          if (isNaN(val) || val < 1) {
-            input.value = this.config.maxLevel;
-            return;
-          }
-          if (val > MAX_LEVEL) {
-            input.value = MAX_LEVEL;
-          }
-          this.config.maxLevel = Math.min(val, MAX_LEVEL);
-        });
-        return input;
-      },
-    });
+  /**
+   * 创建最大层级设置项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createMaxLevelSetting() {
+    return this.createNumberInputSetting(
+      this.plugin.i18n.maxLevelTitle,
+      this.plugin.i18n.maxLevelDesc.replace(/\{maxLevel\}/g, CONFIG.MAX_LEVEL),
+      "maxLevel",
+      1,
+      CONFIG.MAX_LEVEL,
+      1,
+    );
+  }
 
-    // 添加设置项：拼接文档最大数量
-    this.setting.addItem({
-      title: this.i18n.maxCountTitle,
-      description: this.i18n.maxCountDesc.replace(/\{maxCount\}/g, MAX_COUNT),
-      direction: "row",
-      createActionElement: () => {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.className = "b3-text-field";
-        input.style.width = "100px";
-        input.value = this.config.maxCount;
-        input.min = 10;
-        input.max = MAX_COUNT; // 增加 max 属性
-        input.step = 5;
-        input.addEventListener("change", () => {
-          const val = parseInt(input.value, 10);
-          if (isNaN(val) || val < 10) {
-            input.value = this.config.maxCount;
-            return;
-          }
-          if (val > MAX_COUNT) {
-            input.value = MAX_COUNT;
-          }
-          this.config.maxCount = Math.min(val, MAX_COUNT);
-        });
-        return input;
-      },
-    });
+  /**
+   * 创建最大文档数量设置项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createMaxCountSetting() {
+    return this.createNumberInputSetting(
+      this.plugin.i18n.maxCountTitle,
+      this.plugin.i18n.maxCountDesc.replace(/\{maxCount\}/g, CONFIG.MAX_COUNT),
+      "maxCount",
+      10,
+      CONFIG.MAX_COUNT,
+      5,
+    );
+  }
 
-    // 添加设置项：悬浮编辑按钮距顶部距离
-    this.setting.addItem({
-      title: this.i18n.floatingEditButtonTopDistanceTitle,
-      description: this.i18n.floatingEditButtonTopDistanceDesc
-        .replace(/\{minDistance\}/g, FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE)
-        .replace(/\{maxDistance\}/g, FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE),
+  /**
+   * 创建顶部安全距离设置项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createFloatingTopDistanceSetting() {
+    return this.createNumberInputSetting(
+      this.plugin.i18n.floatingEditButtonTopDistanceTitle,
+      this.plugin.i18n.floatingEditButtonTopDistanceDesc
+        .replace(/\{minDistance\}/g, CONFIG.FLOATING_EDIT_BUTTON.TOP.MIN)
+        .replace(/\{maxDistance\}/g, CONFIG.FLOATING_EDIT_BUTTON.TOP.MAX),
+      "floatingEditButtonTopDistance",
+      CONFIG.FLOATING_EDIT_BUTTON.TOP.MIN,
+      CONFIG.FLOATING_EDIT_BUTTON.TOP.MAX,
+      1,
+    );
+  }
+
+  /**
+   * 创建底部安全距离设置项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createFloatingBottomDistanceSetting() {
+    return this.createNumberInputSetting(
+      this.plugin.i18n.floatingEditButtonBottomDistanceTitle,
+      this.plugin.i18n.floatingEditButtonBottomDistanceDesc
+        .replace(/\{minDistance\}/g, CONFIG.FLOATING_EDIT_BUTTON.BOTTOM.MIN)
+        .replace(/\{maxDistance\}/g, CONFIG.FLOATING_EDIT_BUTTON.BOTTOM.MAX),
+      "floatingEditButtonBottomDistance",
+      CONFIG.FLOATING_EDIT_BUTTON.BOTTOM.MIN,
+      CONFIG.FLOATING_EDIT_BUTTON.BOTTOM.MAX,
+      1,
+    );
+  }
+
+  /**
+   * 创建显示子文档标题设置项
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createShowSubDocTitleSetting() {
+    return {
+      title: this.plugin.i18n.showSubDocTitleTitle,
+      description: this.plugin.i18n.showSubDocTitleDesc,
       direction: "row",
       createActionElement: () => {
+        const container = document.createElement("div");
         const input = document.createElement("input");
-        input.type = "number";
-        input.className = "b3-text-field";
-        input.style.width = "100px";
-        input.value = this.config.floatingEditButtonTopDistance;
-        input.min = FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE;
-        input.max = FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE; // 增加 max
-        input.step = 1;
+        input.type = "checkbox";
+        input.className = "b3-switch";
+        input.checked = this.plugin.config.showSubDocTitle;
         input.addEventListener("change", () => {
-          const val = parseInt(input.value, 10);
-          if (isNaN(val) || val < FLOATING_EDIT_BUTTON_TOP_MIN_DISTANCE) {
-            input.value = this.config.floatingEditButtonTopDistance;
-            return;
-          }
-          if (val > FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE) {
-            input.value = FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE;
-          }
-          this.config.floatingEditButtonTopDistance = Math.min(
-            val,
-            FLOATING_EDIT_BUTTON_TOP_MAX_DISTANCE,
-          );
+          this.plugin.config.showSubDocTitle = input.checked;
         });
-        return input;
+        container.appendChild(input);
+        return container;
       },
-    });
-    // 添加设置项：悬浮编辑按钮距底部距离
-    this.setting.addItem({
-      title: this.i18n.floatingEditButtonBottomDistanceTitle,
-      description: this.i18n.floatingEditButtonBottomDistanceDesc
-        .replace(/\{minDistance\}/g, FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE)
-        .replace(/\{maxDistance\}/g, FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE),
+    };
+  }
+
+  /**
+   * 创建浮动按钮方向设置项（左右选择）
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createFloatingDirectionSetting() {
+    return {
+      title: this.plugin.i18n.floatingEditButtonDirectionTitle,
+      description: this.plugin.i18n.floatingEditButtonDirectionDesc,
       direction: "row",
       createActionElement: () => {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.className = "b3-text-field";
-        input.style.width = "100px";
-        input.value = this.config.floatingEditButtonBottomDistance;
-        input.min = FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE;
-        input.max = FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE; // 增加 max
-        input.step = 1;
-        input.addEventListener("change", () => {
-          const val = parseInt(input.value, 10);
-          if (isNaN(val) || val < FLOATING_EDIT_BUTTON_BOTTOM_MIN_DISTANCE) {
-            input.value = this.config.floatingEditButtonBottomDistance;
-            return;
-          }
-          if (val > FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE) {
-            input.value = FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE;
-          }
-          this.config.floatingEditButtonBottomDistance = Math.min(
-            val,
-            FLOATING_EDIT_BUTTON_BOTTOM_MAX_DISTANCE,
-          );
-        });
-        return input;
-      },
-    });
-    // 添加设置项：悬浮编辑按钮显示位置
-    this.setting.addItem({
-      title: this.i18n.floatingEditButtonDirectionTitle,
-      description: this.i18n.floatingEditButtonDirectionDesc,
-      direction: "row",
-      createActionElement: () => {
-        // 创建一个容器（可选）
         const container = document.createElement("div");
 
-        // 创建第一个radio (left)
         const radioLeft = document.createElement("input");
+        radioLeft.className = "b3-switch";
+        radioLeft.style.marginRight = "8px";
         radioLeft.type = "radio";
         radioLeft.name = "direction";
         radioLeft.value = "left";
         radioLeft.id = "direction-left";
 
-        // 创建label
         const labelLeft = document.createElement("label");
+        labelLeft.className = "b3-label--inner";
         labelLeft.htmlFor = "direction-left";
-        labelLeft.textContent = this.i18n.floatingEditButtonDirectionLeft;
-        labelLeft.style.marginRight = "24px";
-        labelLeft.style.marginLeft = "8px";
-        if (this.config.floatingEditButtonDirection === "left") {
-          radioLeft.checked = true;
-        }
+        labelLeft.textContent =
+          this.plugin.i18n.floatingEditButtonDirectionLeft;
+        radioLeft.checked =
+          this.plugin.config.floatingEditButtonDirection === "left";
 
-        // 绑定事件
         radioLeft.addEventListener("change", () => {
           if (radioLeft.checked) {
-            this.config.floatingEditButtonDirection = "left";
+            this.plugin.config.floatingEditButtonDirection = "left";
           }
         });
 
-        // 将radio和label添加到容器
-        container.appendChild(radioLeft);
-        container.appendChild(labelLeft);
-
-        // 创建第二个radio (right)
         const radioRight = document.createElement("input");
+        radioRight.className = "b3-switch";
+        radioRight.style.marginRight = "8px";
+        radioRight.style.marginLeft = "8px";
         radioRight.type = "radio";
         radioRight.name = "direction";
         radioRight.value = "right";
         radioRight.id = "direction-right";
 
         const labelRight = document.createElement("label");
+        labelRight.className = "b3-label--inner";
         labelRight.htmlFor = "direction-right";
-        labelRight.textContent = this.i18n.floatingEditButtonDirectionRight;
-        labelRight.style.marginLeft = "8px";
+        labelRight.textContent =
+          this.plugin.i18n.floatingEditButtonDirectionRight;
+        radioRight.checked =
+          this.plugin.config.floatingEditButtonDirection === "right";
 
-        if (this.config.floatingEditButtonDirection === "right") {
-          radioRight.checked = true;
-        }
         radioRight.addEventListener("change", () => {
           if (radioRight.checked) {
-            this.config.floatingEditButtonDirection = "right";
+            this.plugin.config.floatingEditButtonDirection = "right";
           }
         });
 
+        container.appendChild(radioLeft);
+        container.appendChild(labelLeft);
         container.appendChild(radioRight);
         container.appendChild(labelRight);
+
         return container;
       },
+    };
+  }
+
+  /**
+   * 辅助方法：创建数字输入框设置项
+   * @param {string} title - 标题
+   * @param {string} description - 描述
+   * @param {string} configKey - 配置键名
+   * @param {number} min - 最小值
+   * @param {number} max - 最大值
+   * @param {number} step - 步长
+   * @returns {Object} 设置项定义
+   * @private
+   */
+  createNumberInputSetting(title, description, configKey, min, max, step) {
+    return {
+      title,
+      description,
+      direction: "row",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field";
+        input.style.width = "100px";
+        input.value = this.plugin.config[configKey];
+        input.min = min;
+        input.max = max;
+        input.step = step;
+
+        input.addEventListener("change", () => {
+          const val = parseInt(input.value, 10);
+          if (isNaN(val) || val < min) {
+            input.value = this.plugin.config[configKey];
+            return;
+          }
+          this.plugin.config[configKey] = Math.min(val, max);
+          input.value = this.plugin.config[configKey];
+        });
+
+        return input;
+      },
+    };
+  }
+}
+
+// ============================================================================
+// 事件监听器管理
+// ============================================================================
+
+/**
+ * 事件监听管理器，统一注册和清理各类事件监听器
+ */
+class EventListenerManager {
+  /**
+   * @param {Plugin} plugin - 插件主实例
+   */
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.cleanupFunctions = [];
+  }
+
+  /**
+   * 注册所有窗口级别的事件监听器
+   */
+  registerWindowListeners() {
+    const refreshPositions = () =>
+      this.plugin.positionService.updatePositions();
+    const scrollHandler = debounce(refreshPositions, 10);
+    const resizeHandler = debounce(refreshPositions, 10);
+
+    this.registerScrollListeners(scrollHandler);
+    this.registerResizeListener(resizeHandler);
+    this.registerMouseMoveListener(refreshPositions);
+  }
+
+  /**
+   * 注册滚动事件监听器（包括窗口和内部滚动容器）
+   * @param {Function} handler - 处理函数
+   * @private
+   */
+  registerScrollListeners(handler) {
+    window.addEventListener("scroll", handler, { capture: true });
+    this.cleanupFunctions.push(() => {
+      window.removeEventListener("scroll", handler, { capture: true });
     });
 
-    // 创建位置刷新函数（用于滚动/resize 时更新编辑链接位置）
-    const refreshPositions = () => {
-      this.updateEditLinkPositions();
-    };
-    // 防抖处理，避免频繁触发
-    const scrollHandler = this.debounce(refreshPositions, 10);
-    const resizeHandler = this.debounce(refreshPositions, 10);
+    this.registerInternalScrollListeners(handler);
+  }
 
-    // 鼠标移动处理器（仅用于触发位置更新）
-    const mouseMoveHandler = (e) => {
-      this.currentMouseY = e.clientY;
-      // 使用 requestAnimationFrame 优化性能，避免频繁更新
-      if (!this.rafId) {
-        this.rafId = requestAnimationFrame(() => {
-          this.updateEditLinkPositions();
-          this.rafId = null;
-        });
-      }
-    };
-
-    // 监听 window 滚动和 resize
-    window.addEventListener("scroll", scrollHandler, true);
-    window.addEventListener("resize", resizeHandler);
-    window.addEventListener("mousemove", mouseMoveHandler, { passive: true });
-
-    // 思源笔记内部滚动容器监听（关键修复）
-    const internalScrollContainers = [
-      ".fn__flex-1",
-      ".protyle",
-      ".layout__tab-content",
-      ".fn__flex-column",
-    ];
-
-    // 延迟绑定内部滚动监听（确保 DOM 已加载）
+  /**
+   * 为内部可能滚动的容器添加滚动监听（延迟执行确保 DOM 已就绪）
+   * @param {Function} handler - 处理函数
+   * @private
+   */
+  registerInternalScrollListeners(handler) {
     setTimeout(() => {
-      internalScrollContainers.forEach((selector) => {
-        const containers = document.querySelectorAll(selector);
-        containers.forEach((container) => {
-          container.addEventListener("scroll", scrollHandler, {
-            passive: true,
-          });
-          this.cleanupFunctions.push(() => {
-            container.removeEventListener("scroll", scrollHandler);
-          });
-        });
-      });
-    }, 50);
-
-    // 监听 DOM 变化，动态添加新的滚动容器监听
-    const observer = new MutationObserver(() => {
-      internalScrollContainers.forEach((selector) => {
+      CONFIG.SELECTORS.SCROLL_CONTAINERS.forEach((selector) => {
         const containers = document.querySelectorAll(selector);
         containers.forEach((container) => {
           if (!container._hasScrollListener) {
-            container.addEventListener("scroll", scrollHandler, {
-              passive: true,
-            });
+            container.addEventListener("scroll", handler, { passive: true });
             container._hasScrollListener = true;
             this.cleanupFunctions.push(() => {
-              container.removeEventListener("scroll", scrollHandler);
+              container.removeEventListener("scroll", handler);
+              delete container._hasScrollListener;
+            });
+          }
+        });
+      });
+    }, 50);
+  }
+
+  /**
+   * 注册窗口大小改变监听
+   * @param {Function} handler - 处理函数
+   * @private
+   */
+  registerResizeListener(handler) {
+    window.addEventListener("resize", handler);
+    this.cleanupFunctions.push(() => {
+      window.removeEventListener("resize", handler);
+    });
+  }
+
+  /**
+   * 注册鼠标移动监听（用于动态调整位置）
+   * @param {Function} handler - 处理函数
+   * @private
+   */
+  registerMouseMoveListener(handler) {
+    window.addEventListener("mousemove", handler, { passive: true });
+    this.cleanupFunctions.push(() => {
+      window.removeEventListener("mousemove", handler);
+    });
+  }
+
+  /**
+   * 注册 MutationObserver 以监听 DOM 变化，对新出现的滚动容器添加监听
+   * @param {Function} handler - 滚动处理函数
+   */
+  registerMutationObserver(handler) {
+    const observer = new MutationObserver(() => {
+      CONFIG.SELECTORS.SCROLL_CONTAINERS.forEach((selector) => {
+        const containers = document.querySelectorAll(selector);
+        containers.forEach((container) => {
+          if (!container._hasScrollListener) {
+            container.addEventListener("scroll", handler, { passive: true });
+            container._hasScrollListener = true;
+            this.cleanupFunctions.push(() => {
+              container.removeEventListener("scroll", handler);
+              delete container._hasScrollListener;
             });
           }
         });
@@ -360,97 +1405,152 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
 
     observer.observe(document.body, { childList: true, subtree: true });
     this.cleanupFunctions.push(() => observer.disconnect());
+  }
 
-    // 注册窗口事件清理函数
-    this.cleanupFunctions.push(() => {
-      window.removeEventListener("scroll", scrollHandler, true);
-      window.removeEventListener("resize", resizeHandler);
-      window.removeEventListener("mousemove", mouseMoveHandler);
-      if (this.rafId) {
-        cancelAnimationFrame(this.rafId);
+  /**
+   * 注册思源事件总线（eventBus）上的事件监听
+   */
+  registerEventBusListeners() {
+    this.plugin.eventBus.on(
+      CONFIG.EVENTS.PROTYLE_DYNAMIC,
+      this.plugin.boundOnProtyleLoaded,
+    );
+    this.plugin.eventBus.on(
+      CONFIG.EVENTS.PROTYLE_STATIC,
+      this.plugin.boundOnProtyleLoaded,
+    );
+    this.plugin.eventBus.on(
+      CONFIG.EVENTS.UNLOAD_DOC,
+      this.plugin.boundHandleDocUnload,
+    );
+    this.plugin.eventBus.on(
+      CONFIG.EVENTS.WS_MAIN,
+      this.plugin.boundHandleWsMain,
+    );
+  }
+
+  /**
+   * 清理所有已注册的监听器
+   */
+  cleanup() {
+    this.cleanupFunctions.forEach((fn) => fn());
+    this.cleanupFunctions = [];
+
+    if (this.plugin.rafId) {
+      cancelAnimationFrame(this.plugin.rafId);
+      this.plugin.rafId = null;
+    }
+  }
+}
+
+// ============================================================================
+// 插件主类
+// ============================================================================
+
+/**
+ * 思源笔记子文档拼接插件主类
+ * @extends Plugin
+ */
+module.exports = class ConcatSubDocsPlugin extends Plugin {
+  /**
+   * 插件加载时的初始化
+   * @override
+   */
+  async onload() {
+    await this.loadConfig();
+    this.concatContainers = new Map(); // 存储文档ID -> { container, observer, editorElement }
+    this.subdocElements = new Map(); // 存储子文档ID -> DOM元素
+    this.lastToggleTime = 0; // 防抖用的上次点击时间
+    this.rafId = null; // requestAnimationFrame ID（未使用但保留）
+
+    this.initServices();
+    this.settingsService.init();
+    this.eventListenerManager.registerWindowListeners();
+    this.eventListenerManager.registerMutationObserver(
+      debounce(() => this.positionService.updatePositions(), 10),
+    );
+    this.eventListenerManager.registerEventBusListeners();
+  }
+
+  /**
+   * 初始化所有服务类
+   * @private
+   */
+  initServices() {
+    this.apiService = new ApiService();
+    this.blockService = new BlockService(this.apiService);
+    // 传入插件实例以在 DocumentService 中使用 this.app
+    this.documentService = new DocumentService(this.apiService, this);
+    this.stateService = new StateService(this, this.blockService);
+    this.componentService = new ComponentService(this);
+    this.positionService = new PositionService(this);
+    this.settingsService = new SettingsService(this);
+    this.eventListenerManager = new EventListenerManager(this);
+
+    // 绑定事件处理函数到当前实例
+    this.boundOnProtyleLoaded = this.handleProtyleLoaded.bind(this);
+    this.boundHandleDocUnload = this.handleDocUnload.bind(this);
+    this.boundHandleWsMain = this.handleWsMain.bind(this);
+  }
+
+  /**
+   * 处理 Protyle 加载完成事件（动态加载或静态加载）
+   * @param {CustomEvent} event - 事件对象，detail 中包含 protyle
+   */
+  async handleProtyleLoaded(event) {
+    const protyle = event.detail.protyle;
+    if (!protyle) return;
+
+    const docId = this.blockService.getDocIdFromElement(protyle.element);
+    if (!docId) return;
+
+    const enabled = await this.blockService.getConcatState(docId);
+    this.componentService.createToggleButton(protyle, enabled, docId);
+
+    const editorElement = protyle.wysiwyg.element;
+
+    if (enabled) {
+      const subDocs = await this.documentService.getSubDocs(docId);
+      if (subDocs.length > 0) {
+        await this.enableConcat(docId, editorElement).catch(console.error);
+      } else {
+        await this.blockService.setConcatState(docId, false);
       }
-    });
+    } else {
+      const mainDocEditorClass = getDocScopedClass(CONFIG.CSS_CLASSES.MAIN_DOC_EDITOR, docId);
+      editorElement.classList.remove(mainDocEditorClass);
 
-    // 注册事件总线监听
-    this.eventBus.on("loaded-protyle-dynamic", this.onProtyleLoaded.bind(this));
-    this.eventBus.on("loaded-protyle-static", this.onProtyleLoaded.bind(this));
-    this.eventBus.on("unload-doc", this.handleDocUnload.bind(this));
-    // 新增：监听文档更新事件，实现内容实时同步
-    this.eventBus.on("ws-main", this.handleWsMain.bind(this));
-  }
+      const containerClass = getDocScopedClass(CONFIG.CSS_CLASSES.CONTAINER, docId);
+      const existing = editorElement.nextElementSibling;
+      if (
+        existing &&
+        existing.matches(
+          `.${containerClass}[${CONFIG.ATTRIBUTES.DOC_ID}="${docId}"]`,
+        )
+      ) {
+        existing.remove();
+      }
 
-  /**
-   * 插件卸载时清理资源
-   * - 移除所有拼接容器
-   * - 注销事件监听
-   * - 清理定时器
-   */
-  onunload() {
-    this.removeAllConcatContainers();
-    this.eventBus.off("loaded-protyle-dynamic", this.onProtyleLoaded);
-    this.eventBus.off("loaded-protyle-static", this.onProtyleLoaded);
-    this.eventBus.off("unload-doc", this.handleDocUnload);
-    this.eventBus.off("ws-main", this.handleWsMain);
-    // 清理窗口事件监听器
-    if (this.cleanupFunctions) {
-      this.cleanupFunctions.forEach((fn) => fn());
-      this.cleanupFunctions = [];
-    }
-    if (this.rafId) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+      this.concatContainers.delete(docId);
     }
   }
 
   /**
-   * 插件卸载时删除插件数据
+   * 处理文档卸载事件
+   * @param {CustomEvent} event - 事件对象，detail 中包含 docId
    */
-  uninstall() {
-    this.removeData(STORAGE_NAME)
-      .then(() => {
-        console.log(`卸载 [${this.name}] 删除 [${STORAGE_NAME}] 成功`);
-      })
-      .catch((e) => {
-        console.error(
-          `卸载 [${this.name}] 删除 [${STORAGE_NAME}] 失败： ${e.msg}`,
-        );
-      });
-  }
-
-  /**
-   * 加载插件配置
-   * @returns {Promise<void>}
-   */
-  async loadConfig() {
-    this.config = {
-      maxLevel: 1,
-      maxCount: 10,
-      floatingEditButtonTopDistance: 105,
-      floatingEditButtonBottomDistance: 55,
-      floatingEditButtonDirection: "right",
-    };
-    const saved = await this.loadData(STORAGE_NAME);
-    if (saved) {
-      this.config = { ...this.config, ...saved };
-    }
-  }
-  /**
-   * 保存配置
-   */
-  async saveConfig() {
-    try {
-      await this.saveData(STORAGE_NAME, this.config);
-      showMessage(this.i18n.configSavedSuccess, 2000);
-    } catch (error) {
-      showMessage(this.i18n.configSavedFail);
-      console.error(error);
+  handleDocUnload(event) {
+    const { docId } = event.detail;
+    if (docId) {
+      const data = this.concatContainers.get(docId);
+      if (data && data.observer) data.observer.disconnect();
+      this.concatContainers.delete(docId);
     }
   }
 
   /**
-   * 处理 ws-main 事件，捕获块更新
-   * 当子文档内容发生变化时，实时更新拼接显示
-   * @param {Object} event - 事件对象
+   * 处理 ws-main 事件（实时同步更新子文档内容）
+   * @param {CustomEvent} event - 事件对象，detail 中包含操作数据
    */
   async handleWsMain(event) {
     const detail = event.detail;
@@ -458,58 +1558,47 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
 
     for (const item of detail.data) {
       if (!item.doOperations || !Array.isArray(item.doOperations)) continue;
+
       for (const op of item.doOperations) {
-        // 只处理更新、删除、插入、移动操作
-        if (
-          op.action !== "update" &&
-          op.action !== "delete" &&
-          op.action !== "insert" &&
-          op.action !== "move"
-        )
+        if (!["update", "delete", "insert", "move"].includes(op.action))
           continue;
 
         const blockId = op.id;
         if (!blockId) continue;
 
-        // 处理文档块删除：尝试从拼接区域移除对应容器
+        // 处理文档块删除：移除对应的子文档容器
         if (op.action === "delete" && op.type === "d") {
-          // 直接查找对应的容器并移除
           const subdocContainer = document.querySelector(
             `.concat-subdoc-item[data-subdoc-id="${blockId}"]`,
           );
           if (subdocContainer) {
             subdocContainer.remove();
             this.subdocElements.delete(blockId);
-            // 还需要更新父文档的计数等？但父文档的容器可能还在，但子项已移除，不影响
           }
-          continue; // 不再尝试更新内容
+          continue;
         }
 
+        // 获取操作块的根文档 ID
         let rootId = null;
         try {
           if (op.action === "delete") {
-            // 删除操作：通过父块 ID 获取根文档
             if (op.parentID) {
-              const parentInfo = await this.getBlockInfo(op.parentID).catch(
-                () => null,
+              const parentInfo = await this.apiService.getBlockInfo(
+                op.parentID,
               );
               if (parentInfo) rootId = parentInfo.rootID;
             }
-            // 如果无法通过父 ID 获取，尝试 DOM 查找
             if (!rootId) {
               const element = document.querySelector(
                 `[data-node-id="${op.id}"]`,
               );
               if (element) {
                 const ancestor = element.closest("[data-subdoc-id]");
-                if (ancestor) {
-                  rootId = ancestor.getAttribute("data-subdoc-id");
-                }
+                if (ancestor) rootId = ancestor.getAttribute("data-subdoc-id");
               }
             }
           } else {
-            // 其他操作：直接获取块信息
-            const blockInfo = await this.getBlockInfo(blockId);
+            const blockInfo = await this.apiService.getBlockInfo(blockId);
             if (blockInfo) rootId = blockInfo.rootID;
           }
         } catch (e) {
@@ -519,15 +1608,17 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
 
         if (!rootId) continue;
 
-        // 如果该子文档正在拼接显示中，则更新其内容
+        // 如果该子文档正在显示中，则重新获取其内容并更新
         if (this.subdocElements.has(rootId)) {
           const element = this.subdocElements.get(rootId);
           if (element?.parentNode) {
-            const newContent = await this.getDocRenderedContent(rootId);
-            const contentDiv = element.querySelector(".concat-subdoc-content");
+            const newHtml = await this.documentService.renderSubDocHtml(rootId);
+            const contentDiv = element.querySelector(
+              `.${CONFIG.CSS_CLASSES.SUBDOC_CONTENT}`,
+            );
             if (contentDiv) {
-              contentDiv.innerHTML = newContent;
-              this.setSubElementContentEditable(contentDiv);
+              contentDiv.innerHTML = newHtml;
+              this.componentService.setContentEditable(contentDiv);
             }
           }
         }
@@ -536,191 +1627,64 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
   }
 
   /**
-   * 清除所有文档的拼接状态
-   * 批量将所有文档的 custom-concat 属性设置为 false
+   * 插件卸载时的清理
+   * @override
+   */
+  onunload() {
+    this.removeAllConcatContainers();
+    this.eventListenerManager.cleanup();
+  }
+
+  /**
+   * 插件卸载（删除数据）时的处理
+   * @override
+   */
+  uninstall() {
+    this.removeData(CONFIG.STORAGE_NAME)
+      .then(() => {
+        console.log(`卸载 [${this.name}] 删除 [${CONFIG.STORAGE_NAME}] 成功`);
+      })
+      .catch((e) => {
+        console.error(
+          `卸载 [${this.name}] 删除 [${CONFIG.STORAGE_NAME}] 失败：${e.msg}`,
+        );
+      });
+  }
+
+  /**
+   * 加载插件配置
    * @returns {Promise<void>}
    */
-  async clearAllConcatStates() {
-    if (!confirm(this.i18n.clearConfirm)) return;
-
-    showMessage(this.i18n.clearing, 5000);
-
-    try {
-      // 查询所有文档块
-      const sql = "SELECT id FROM blocks WHERE type = 'd'";
-      const result = await this.callApi("/api/query/sql", { stmt: sql });
-      if (!result || !Array.isArray(result) || result.length === 0) {
-        showMessage(this.i18n.noDocFound, 3000, "info");
-        return;
-      }
-
-      const docIds = result.map((row) => row.id);
-      const total = docIds.length;
-      let processed = 0;
-
-      // 分批并发设置属性，避免单次请求过多
-      const BATCH_SIZE = 10; // 并发数
-      await pLimit(
-        docIds,
-        async (id) => {
-          try {
-            await this.setBlockAttrs(id, { "custom-concat": "false" });
-            processed++;
-          } catch (e) {
-            console.error(`设置文档 ${id} 属性失败`, e);
-          }
-        },
-        BATCH_SIZE,
-      );
-
-      // 清理当前打开的文档容器
-      if (this.app && this.app.workspace) {
-        const tabs = this.app.workspace.tabs;
-        for (const tab of tabs) {
-          const docId = tab.model?.documentId;
-          if (docId && this.concatContainers.has(docId)) {
-            const data = this.concatContainers.get(docId);
-            if (data && data.container) {
-              data.container.remove();
-            }
-            this.concatContainers.delete(docId);
-          }
-        }
-      }
-
-      showMessage(
-        this.i18n.clearSuccess.replace(/\{count\}/g, processed),
-        5000,
-      );
-    } catch (e) {
-      console.error("清除拼接状态失败", e);
-      showMessage(this.i18n.clearFail, 5000, "error");
+  async loadConfig() {
+    this.config = { ...CONFIG.DEFAULT_CONFIG };
+    const saved = await this.loadData(CONFIG.STORAGE_NAME);
+    if (saved) {
+      this.config = { ...this.config, ...saved };
     }
   }
 
   /**
-   * 调用思源笔记 API
-   * @param {string} url - API 路径
-   * @param {Object} data - 请求数据
-   * @returns {Promise<any>} API 响应数据
+   * 保存插件配置
+   * @returns {Promise<void>}
    */
-  async callApi(url, data) {
-    const response = await fetch(url, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const text = await response.text();
-    if (!text) return null;
-    try {
-      const json = JSON.parse(text);
-      if (json.code !== 0) throw new Error(json.msg);
-      return json.data;
-    } catch (e) {
-      console.error("API 解析失败", url, e);
-      throw e;
-    }
+  async saveConfig() {
+    this.saveData(CONFIG.STORAGE_NAME, this.config)
+      .then(() => {
+        showMessage(this.i18n.configSavedSuccess, 2000);
+      })
+      .catch((error) => {
+        showMessage(this.i18n.configSavedFail);
+        console.error(error);
+      });
   }
 
   /**
-   * 从 Protyle 元素获取文档 ID
-   * @param {HTMLElement} protyleElement - Protyle 元素
-   * @returns {string|null} 文档 ID
-   */
-  getDocIdFromElement(protyleElement) {
-    const rootBlock = protyleElement.querySelector("[data-node-id]");
-    return rootBlock ? rootBlock.getAttribute("data-node-id") : null;
-  }
-
-  /**
-   * Protyle 加载完成时的处理
-   * - 检查拼接状态
-   * - 创建切换按钮
-   * - 启用拼接（如果需要）
-   * @param {Object} event - 事件对象
-   */
-  async onProtyleLoaded(event) {
-    const protyle = event.detail.protyle;
-    if (!protyle) return;
-    const docId = this.getDocIdFromElement(protyle.element);
-    if (!docId) return;
-
-    const enabled = await this.getConcatState(docId);
-    this.createToggleButton(protyle, enabled, docId);
-
-    const editorElement = protyle.wysiwyg.element;
-    if (enabled) {
-      const subDocs = await this.getSubDocs(docId);
-      if (subDocs.length > 0) {
-        await this.enableConcat(docId, editorElement).catch(console.error);
-      } else {
-        await this.setConcatState(docId, false);
-      }
-    } else {
-      editorElement.classList.remove("concat-maindoc-editor");
-      const existing = editorElement.nextElementSibling;
-      if (
-        existing &&
-        existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)
-      ) {
-        existing.remove(); // 存在则移除
-      }
-      this.concatContainers.delete(docId);
-    }
-  }
-
-  /**
-   * 创建拼接状态切换按钮
-   * @param {Object} protyle - Protyle 实例
-   * @param {boolean} enabled - 当前是否启用
-   * @param {string} docId - 文档 ID
-   */
-  createToggleButton(protyle, enabled, docId) {
-    const breadcrumb_bar = protyle.breadcrumb.element;
-    const breadcrumb__space = breadcrumb_bar.nextElementSibling;
-    if (
-      breadcrumb__space &&
-      breadcrumb__space.matches(".protyle-breadcrumb__space")
-    ) {
-      // 移除已存在的按钮
-      const existing = breadcrumb__space.nextElementSibling;
-      if (existing && existing.matches(".concat-toggle-button")) {
-        existing.remove();
-      }
-      const toggleButton = document.createElement("button");
-      toggleButton.innerHTML = ICON;
-      toggleButton.className = `block__icon fn__flex-center ariaLabel concat-toggle-button ${enabled ? "concat-enabled" : ""}`;
-      toggleButton.ariaLabel = this.i18n.toggleTitle;
-      // 修复：使用 async 函数确保状态更新后再获取新状态
-      toggleButton.onclick = async () => {
-        await this.toggleConcatForCurrentDoc(toggleButton, docId);
-        const newEnabled = await this.getConcatState(docId);
-        toggleButton.classList.toggle("concat-enabled", newEnabled);
-      };
-      breadcrumb__space.insertAdjacentElement("afterend", toggleButton);
-    }
-  }
-
-  /**
-   * 文档卸载时的处理
-   * @param {Object} event - 事件对象
-   */
-  handleDocUnload(event) {
-    const { docId } = event.detail;
-    if (docId) {
-      this.concatContainers.delete(docId);
-      // 清理 subdocElements 中属于该文档的子文档（可选，但不需要，因为子文档元素会被移除）
-    }
-  }
-
-  /**
-   * 切换当前文档的拼接状态
-   * @param {HTMLElement} toggleButton - 切换按钮元素
-   * @param {string} docId - 文档 ID
+   * 切换当前文档的拼接状态（开关按钮点击时调用）
+   * @param {HTMLElement} toggleButton - 开关按钮元素
+   * @param {string} docId - 当前文档 ID
    * @returns {Promise<void>}
    */
   async toggleConcatForCurrentDoc(toggleButton, docId) {
-    // 防抖：避免快速连续点击
     const now = Date.now();
     if (now - this.lastToggleTime < 100) return;
     this.lastToggleTime = now;
@@ -734,6 +1698,7 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       showMessage(this.i18n.noDocId, 3000, "error");
       return;
     }
+
     const visibleProtyle = toggleButton.closest(".protyle");
     if (!visibleProtyle) {
       showMessage(this.i18n.noCurrentDoc, 3000, "error");
@@ -746,281 +1711,66 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       return;
     }
 
-    const subDocs = await this.getSubDocs(docId);
+    const subDocs = await this.documentService.getSubDocs(docId);
     if (subDocs.length === 0) {
       showMessage(this.i18n.noSubDocs, 3000, "info");
-      this.setConcatState(docId, false);
+      await this.blockService.setConcatState(docId, false);
       return;
     }
 
-    // 检查是否已存在拼接容器
+    const containerClass = getDocScopedClass(CONFIG.CSS_CLASSES.CONTAINER, docId);
     const existing = editorElement.nextElementSibling;
     if (
       existing &&
-      existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)
+      existing.matches(
+        `.${containerClass}[${CONFIG.ATTRIBUTES.DOC_ID}="${docId}"]`,
+      )
     ) {
-      // 存在则移除，关闭拼接
+      // 断开 observer 并移除容器
+      const data = this.concatContainers.get(docId);
+      if (data && data.observer) data.observer.disconnect();
       existing.remove();
-      editorElement.classList.remove("concat-maindoc-editor");
+      const mainDocEditorClass = getDocScopedClass(CONFIG.CSS_CLASSES.MAIN_DOC_EDITOR, docId);
+      editorElement.classList.remove(mainDocEditorClass);
       this.concatContainers.delete(docId);
-      await this.setConcatState(docId, false);
+      await this.blockService.setConcatState(docId, false);
     } else {
-      // 不存在则启用拼接
       await this.enableConcat(docId, editorElement);
-      await this.setConcatState(docId, true);
+      await this.blockService.setConcatState(docId, true);
     }
   }
 
   /**
-   * 获取文档的拼接状态
-   * @param {string} docId - 文档 ID
-   * @returns {Promise<boolean>} 是否启用拼接
-   */
-  async getConcatState(docId) {
-    try {
-      const attrs = await this.getBlockAttrs(docId);
-      return attrs["custom-concat"] === "true";
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * 设置文档的拼接状态
-   * @param {string} docId - 文档 ID
-   * @param {boolean} state - 状态值
-   * @returns {Promise<void>}
-   */
-  async setConcatState(docId, state) {
-    try {
-      await this.setBlockAttrs(docId, {
-        "custom-concat": state ? "true" : "false",
-      });
-    } catch (e) {
-      console.error(`设置文档 ${docId} 拼接状态失败`, e);
-    }
-  }
-
-  /**
-   * 获取块的属性
-   * @param {string} blockId - 块 ID
-   * @returns {Promise<Object>} 属性对象
-   */
-  async getBlockAttrs(blockId) {
-    return this.callApi("/api/attr/getBlockAttrs", { id: blockId });
-  }
-
-  /**
-   * 设置块的属性
-   * @param {string} blockId - 块 ID
-   * @param {Object} attrs - 属性对象
-   * @returns {Promise<Object>} API 响应
-   */
-  async setBlockAttrs(blockId, attrs) {
-    return this.callApi("/api/attr/setBlockAttrs", { id: blockId, attrs });
-  }
-
-  /**
-   * 递归获取所有子文档（支持多层级）
-   * @param {string} parentDocId - 父文档 ID
-   * @param {number} currentLevel - 当前层级
-   * @returns {Promise<Array>} 子文档数组
-   */
-  async getAllSubDocs(parentDocId, currentLevel = 1) {
-    // 检查是否超过最大层级
-    if (this.config.maxLevel > 0 && currentLevel > this.config.maxLevel) {
-      return [];
-    }
-    const result = [];
-    const directSubs = await this.getSubDocs(parentDocId);
-    for (const sub of directSubs) {
-      result.push(sub);
-      // 递归获取下级子文档
-      const descendants = await this.getAllSubDocs(sub.id, currentLevel + 1);
-      result.push(...descendants);
-    }
-    return result;
-  }
-
-  /**
-   * 获取直接子文档列表
-   * 优先使用 listDocsByPath API，失败时降级为 SQL 查询
-   * @param {string} parentDocId - 父文档 ID
-   * @returns {Promise<Array>} 子文档数组
-   */
-  async getSubDocs(parentDocId) {
-    try {
-      const parentDoc = await this.getBlockInfo(parentDocId);
-      if (!parentDoc) return [];
-
-      const notebookId = parentDoc.box; // 笔记本 ID
-      const parentPath = parentDoc.path; // 父文档路径
-
-      // 调用正确的 API
-      const data = await this.callApi("/api/filetree/listDocsByPath", {
-        notebook: notebookId,
-        path: parentPath,
-      });
-
-      if (data && data.files && Array.isArray(data.files)) {
-        // files 数组已经按文件树顺序排列，直接返回
-        return data.files.map((file) => ({
-          id: file.id,
-          name: file.name.replace(/\.sy$/, ""), // 去除 .sy 后缀
-          path: file.path,
-        }));
-      }
-    } catch (e) {
-      console.warn("listDocsByPath 失败，降级为 SQL 排序", e);
-    }
-
-    // 降级方案：使用 SQL 查询并按 sort 排序（作为备用）
-    try {
-      const parentDoc = await this.getBlockInfo(parentDocId);
-      if (!parentDoc) return [];
-      const parentPath = parentDoc.path;
-      const parentDir = parentPath.replace(/\.sy$/, "");
-      // 转义路径中的单引号以防 SQL 注入
-      const escapedParentDir = parentDir.replace(/'/g, "''");
-      const sql = `
-                SELECT id, name, path
-                FROM blocks
-                WHERE path LIKE '${escapedParentDir}/%'
-                AND type = 'd'
-                AND path NOT LIKE '${escapedParentDir}/%/%'
-                ORDER BY sort ASC
-            `;
-      const result = await this.callApi("/api/query/sql", { stmt: sql });
-      if (result && result.length > 0) {
-        return result.map((row) => ({
-          id: row.id,
-          name: row.name || "",
-          path: row.path,
-        }));
-      }
-    } catch (e) {
-      console.error("获取子文档失败", e);
-    }
-    return [];
-  }
-
-  /**
-   * 移除 Markdown 内容中的 Front Matter（YAML 头）
-   * @param {string} markdown - Markdown 内容
-   * @returns {string} 处理后的内容
-   */
-  stripFrontMatter(markdown) {
-    if (typeof markdown !== "string") return markdown;
-    const lines = markdown.split("\n");
-    if (lines.length > 0 && lines[0].trim() === "---") {
-      let endIndex = -1;
-      for (let i = 1; i < lines.length; i++) {
-        if (lines[i].trim() === "---") {
-          endIndex = i;
-          break;
-        }
-      }
-      if (endIndex !== -1) {
-        lines.splice(0, endIndex + 1);
-        return lines.join("\n").trim();
-      }
-    }
-    return markdown;
-  }
-
-  /**
-   * 使用 Lute 渲染 Markdown 为 HTML
-   * @param {string} markdown - Markdown 内容
-   * @returns {string|null} HTML 内容
-   */
-  renderMarkdownWithLute(markdown) {
-    if (!window.Lute) return null;
-    try {
-      const lute = window.Lute.New();
-      if (lute && typeof lute.MarkdownStr === "function") {
-        return lute.MarkdownStr("", markdown);
-      } else if (lute && typeof lute.Md2HTML === "function") {
-        return lute.Md2HTML(markdown);
-      }
-    } catch (e) {
-      console.error("Lute 渲染失败", e);
-    }
-    return null;
-  }
-
-  /**
-   * 获取文档渲染后的 HTML 内容
-   * 优先级：getDoc API > Lute 渲染 > 纯文本
-   * @param {string} docId - 文档 ID
-   * @returns {Promise<string>} HTML 内容
-   */
-  async getDocRenderedContent(docId) {
-    // 优先使用 getDoc 获取已渲染的 HTML
-    try {
-      const data = await this.callApi("/api/filetree/getDoc", { id: docId });
-      if (data && data.content) {
-        return data.content;
-      }
-    } catch (e) {
-      console.warn("getDoc 失败，降级为 Lute 渲染", e);
-    }
-
-    // 降级方案：使用 Lute 渲染 Markdown
-    console.log(`文档 ${docId} 降级为 Lute 渲染`);
-    try {
-      const mdData = await this.callApi("/api/export/exportMdContent", {
-        id: docId,
-      });
-      if (mdData && mdData.content) {
-        let markdown = mdData.content;
-        markdown = this.stripFrontMatter(markdown);
-        const html = this.renderMarkdownWithLute(markdown);
-        if (html) return html;
-        return `<pre>${markdown}</pre>`;
-      }
-    } catch {}
-
-    // 最后降级为纯文本
-    console.log(`文档 ${docId} 降级为纯文本`);
-    try {
-      const mdData = await this.callApi("/api/export/exportMdContent", {
-        id: docId,
-      });
-      if (mdData && mdData.content) {
-        let markdown = mdData.content;
-        markdown = this.stripFrontMatter(markdown);
-        return `<pre>${markdown}</pre>`;
-      }
-    } catch (e) {
-      console.error("获取文档内容失败", docId, e);
-    }
-    return `<p>${this.i18n.loadSubDocfailed}</p>`;
-  }
-
-  /**
-   * 启用文档拼接功能
-   * 创建拼接容器并渲染所有子文档内容
-   * @param {string} docId - 主文档 ID
+   * 启用拼接功能：获取子文档内容并插入到主文档下方
+   * @param {string} docId - 当前文档 ID
    * @param {HTMLElement} editorElement - 编辑器元素
    * @returns {Promise<void>}
    */
   async enableConcat(docId, editorElement) {
-    editorElement.classList.add("concat-maindoc-editor");
+    const mainDocEditorClass = getDocScopedClass(CONFIG.CSS_CLASSES.MAIN_DOC_EDITOR, docId);
+    editorElement.classList.add(CONFIG.CSS_CLASSES.MAIN_DOC_EDITOR, mainDocEditorClass);
 
-    // 移除已存在的拼接容器
+    // 移除已存在的容器并断开旧 observer
+    const containerClass = getDocScopedClass(CONFIG.CSS_CLASSES.CONTAINER, docId);
     const existing = editorElement.nextElementSibling;
     if (
       existing &&
-      existing.matches(`.concat-subdocs-container[data-doc-id="${docId}"]`)
+      existing.matches(
+        `.${containerClass}[${CONFIG.ATTRIBUTES.DOC_ID}="${docId}"]`,
+      )
     ) {
+      const oldData = this.concatContainers.get(docId);
+      if (oldData && oldData.observer) oldData.observer.disconnect();
       existing.remove();
     }
 
-    // 获取所有子文档
-    let subDocs = await this.getAllSubDocs(docId);
+    let subDocs = await this.documentService.getAllSubDocs(
+      docId,
+      1,
+      this.config.maxLevel,
+    );
     if (subDocs.length === 0) return;
 
-    // 检查是否超过最大数量限制
     if (this.config.maxCount > 0 && subDocs.length > this.config.maxCount) {
       subDocs = subDocs.slice(0, this.config.maxCount);
       showMessage(
@@ -1030,290 +1780,138 @@ module.exports = class ConcatSubDocsPlugin extends Plugin {
       );
     }
 
-    // 创建拼接容器
-    const container = document.createElement("div");
-    container.className = "concat-subdocs-container";
-    container.setAttribute("data-doc-id", docId);
-    container.contentEditable = "false";
-    container.style.cssText = editorElement.style.cssText;
-
-    const style = document.createElement("style");
-    style.textContent = `
-            .concat-maindoc-editor {
-                padding-bottom: ${editorElement.style.paddingTop || "0px"}!important;
-            }
-            .concat-subdocs-container { 
-                padding: 0 0 ${editorElement.style.paddingBottom}!important;
-            }`;
-    container.appendChild(style);
+    const container = this.componentService.createConcatContainer(
+      docId,
+      editorElement,
+    );
     editorElement.insertAdjacentElement("afterend", container);
 
-    // 并行获取所有子文档内容，但限制并发数
-    const docsWithContent = await pLimit(
+    // 并发渲染所有子文档的 HTML
+    const results = await pLimit(
       subDocs,
       async (subDoc) => {
-        const content = await this.getDocRenderedContent(subDoc.id);
-        return { ...subDoc, content };
+        const html = await this.documentService.renderSubDocHtml(subDoc.id);
+        return { subDoc, html };
       },
-      5, // 并发数设为5
+      CONFIG.CONCURRENCY_LIMIT,
     );
 
-    // 渲染每个子文档
-    for (const subDoc of docsWithContent) {
-      const subDocContainer = document.createElement("div");
-      subDocContainer.classList.add(
-        "protyle-wysiwyg",
-        "concat-subdoc-item",
-        "protyle-custom",
+    for (const { subDoc, html } of results) {
+      const subDocContainer = this.componentService.createSubDocContainer(
+        subDoc,
+        editorElement,
       );
-      subDocContainer.setAttribute("data-subdoc-id", subDoc.id);
-      subDocContainer.style.cssText = editorElement.style.cssText;
-      subDocContainer.style.paddingBottom = editorElement.style.paddingTop;
-
-      // 创建标题容器
-      const headerContainer = document.createElement("div");
-      headerContainer.className = "protyle-title protyle-wysiwyg--attr";
-      headerContainer.contentEditable = "false";
-
-      // 创建标题
-      const header = document.createElement("div");
-      header.className = "protyle-title__input";
-      header.textContent = subDoc.name || this.i18n.subDocTitle;
-      header.contentEditable = "false";
-      headerContainer.appendChild(header);
-      subDocContainer.appendChild(headerContainer);
-
-      // 创建内容区域
-      const contentDiv = document.createElement("div");
-      contentDiv.className =
-        "concat-subdoc-content protyle-wysiwyg protyle-wysiwyg--attr";
-      contentDiv.innerHTML = subDoc.content;
-      contentDiv.contentEditable = "false";
-
-      // 将所有后代元素设置为只读
-      this.setSubElementContentEditable(contentDiv);
-
-      // 创建编辑链接（思源原生块引用，实现悬停预览）
-      const editLink = document.createElement("span");
-      editLink.className = "concat-edit-link";
-      editLink.setAttribute("data-type", "block-ref");
-      editLink.setAttribute("data-id", subDoc.id);
-      editLink.title = this.i18n.editLinkTitle;
-      editLink.innerHTML =
-        '<svg class="icon"><use xlink:href="#iconEdit"></use></svg>';
-
-      subDocContainer.appendChild(contentDiv);
-      subDocContainer.appendChild(editLink);
+      const contentDiv = subDocContainer.querySelector(
+        `.${CONFIG.CSS_CLASSES.SUBDOC_CONTENT}`,
+      );
+      if (contentDiv) {
+        contentDiv.innerHTML = html;
+        this.componentService.setContentEditable(contentDiv);
+      }
       container.appendChild(subDocContainer);
-
-      // 存储子文档元素映射
       this.subdocElements.set(subDoc.id, subDocContainer);
     }
 
-    // 绑定编辑链接点击事件
-    container.querySelectorAll(".concat-edit-link").forEach((link) => {
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const id = link.getAttribute("data-id");
-        if (id) this.openDocument(id);
+    container
+      .querySelectorAll(`.${CONFIG.CSS_CLASSES.EDIT_LINK}`)
+      .forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = link.getAttribute("data-id");
+          if (id) this.documentService.openDocument(id);
+        });
       });
-    });
 
-    this.concatContainers.set(docId, { container });
-    // 初始化 editLink 和浮动按钮位置
-    setTimeout(() => {
-      this.updateEditLinkPositions();
-    }, 10);
+    // 创建 ResizeObserver 监听编辑器样式变化
+    const observer = new ResizeObserver(
+      debounce(() => {
+        this.updateSubdocStyles(docId);
+      }, 100),
+    );
+    observer.observe(editorElement);
+
+    // 存储容器、observer 和编辑器元素，便于后续更新和清理
+    this.concatContainers.set(docId, { container, observer, editorElement });
+
+    // 立即同步一次样式
+    this.updateSubdocStyles(docId);
+    setTimeout(() => this.positionService.updatePositions(), 10);
   }
 
   /**
-   * 设置子文档内容区域的所有元素可编辑性
-   * @param {HTMLElement} contentDiv - 内容区域元素
-   * @param {string} [value="false"] - 元素可编辑性值
-   */
-  setSubElementContentEditable(contentDiv, value = "false") {
-    const allElements = contentDiv.querySelectorAll("*");
-    allElements.forEach((el) => {
-      el.contentEditable = value;
-    });
-  }
-
-  /**
-   * 移除所有拼接容器
-   */
-  removeAllConcatContainers() {
-    for (const docId of this.concatContainers.keys()) {
-      const data = this.concatContainers.get(docId);
-      data.container?.parentNode?.removeChild(data.container);
-      this.concatContainers.delete(docId);
-    }
-    this.subdocElements.clear(); // 清空映射
-  }
-
-  /**
-   * 在新标签页打开文档
+   * 更新指定文档的所有子文档容器样式，使其与主文档编辑器保持一致
    * @param {string} docId - 文档 ID
    */
-  openDocument(docId) {
-    window.open(`siyuan://blocks/${docId}`, "_blank");
-  }
+  updateSubdocStyles(docId) {
+    const data = this.concatContainers.get(docId);
+    if (!data) return;
+    const { container, editorElement } = data;
+    if (!container || !editorElement) return;
 
-  /**
-   * 获取块信息
-   * @param {string} blockId - 块 ID
-   * @returns {Promise<Object|null>} 块信息对象
-   */
-  async getBlockInfo(blockId) {
-    try {
-      return await this.callApi("/api/block/getBlockInfo", { id: blockId });
-    } catch {
-      return null;
-    }
-  }
+    const editorStyle = editorElement.style.cssText;
+    // 更新外部容器样式
+    container.style.cssText = editorStyle;
 
-  /**
-   * 更新所有编辑链接的位置
-   * 根据容器位置和所属编辑器的可视区域动态调整链接位置，确保始终可见
-   * 支持上下分屏（多编辑器实例），有效区域已包含安全余量，防止像素舍入误差
-   */
-  updateEditLinkPositions() {
-    const viewportHeight = window.innerHeight;
-    const TOP_SAFE = this.config.floatingEditButtonTopDistance;
-    const BOTTOM_SAFE = this.config.floatingEditButtonBottomDistance;
-    const LEFT_DIRECTION = this.config.floatingEditButtonDirection === "left";
-    const SAFE_PADDING = 1; // 安全余量，防止浮点数误差导致超出
-
-    const containers = document.querySelectorAll(".concat-subdoc-item");
-
-    containers.forEach((container) => {
-      const editLink = container.querySelector(".concat-edit-link");
-      if (!editLink) return;
-
-      const protyle = container.closest(".protyle");
-      if (!protyle) return;
-
-      const protyleRect = protyle.getBoundingClientRect();
-
-      // 计算 protyle 内部可视区域顶部（考虑面包屑）
-      let visualTop = protyleRect.top;
-      const breadcrumb = protyle.querySelector(".protyle-breadcrumb");
-      if (breadcrumb) {
-        const breadcrumbRect = breadcrumb.getBoundingClientRect();
-        visualTop = Math.max(visualTop, breadcrumbRect.bottom);
-      }
-
-      // 有效区域顶部：取面包屑底部和全局顶部安全距离的较大值，加上安全余量
-      const effectiveTop = Math.max(visualTop, TOP_SAFE) + SAFE_PADDING;
-      // 有效区域底部：取 protyle 内容底部（protyleRect.top + clientHeight）和全局底部安全距离的较小值，减去安全余量
-      const protyleContentBottom = protyleRect.top + protyle.clientHeight;
-      const effectiveBottom =
-        Math.min(protyleContentBottom, viewportHeight - BOTTOM_SAFE) -
-        SAFE_PADDING;
-
-      // 如果有效区域高度不足，跳过（理论上不会）
-      if (effectiveTop >= effectiveBottom) return;
-
-      const editLinkRect = editLink.getBoundingClientRect();
-      const editLinkWidth = editLinkRect.width;
-      const editLinkHeight = editLinkRect.height;
-
-      const VERTICAL_MARGIN = 14; // 统一顶部/底部间距
-
-      const containerRect = container.getBoundingClientRect();
-      const containerTop = containerRect.top;
-      const containerHeight = containerRect.height;
-      const containerBottom = containerRect.bottom;
-
-      // ----- 水平方向处理（基于容器内边距）-----
-      const containerPaddingLeft = parseInt(container.style.paddingLeft) || 0;
-      const containerPaddingRight = parseInt(container.style.paddingRight) || 0;
-      if (LEFT_DIRECTION && containerPaddingLeft > 1.2 * editLinkWidth) {
-        editLink.style.right = "auto";
-        editLink.style.left = `${containerPaddingLeft - 1.2 * editLinkWidth}px`;
-      } else if (
-        !LEFT_DIRECTION &&
-        containerPaddingRight > 1.2 * editLinkWidth
-      ) {
-        editLink.style.left = "auto";
-        editLink.style.right = `${containerPaddingRight - 1.2 * editLinkWidth}px`;
-      } else {
-        editLink.style.left = `${containerPaddingLeft}px`;
-        editLink.style.right = "auto";
-      }
-
-      // 如果容器完全不在有效区域内，固定到顶部安全位置
-      if (containerBottom < effectiveTop || containerTop > effectiveBottom) {
-        editLink.style.transform = `translateY(${TOP_SAFE}px)`;
-        return;
-      }
-
-      // ----- 计算垂直允许范围（基于有效区域与容器的交集）-----
-      const visibleTopInContainer = Math.max(0, effectiveTop - containerTop);
-      const visibleBottomInContainer = Math.min(
-        containerHeight,
-        effectiveBottom - containerTop,
-      );
-
-      let minTop = visibleTopInContainer + VERTICAL_MARGIN;
-      let maxTop = visibleBottomInContainer - editLinkHeight - VERTICAL_MARGIN;
-
-      // 如果边距导致范围无效，回退到不加边距
-      if (minTop > maxTop) {
-        minTop = visibleTopInContainer;
-        maxTop = visibleBottomInContainer - editLinkHeight;
-      }
-
-      // 限制在容器高度范围内
-      minTop = Math.max(0, Math.min(minTop, containerHeight - editLinkHeight));
-      maxTop = Math.max(0, Math.min(maxTop, containerHeight - editLinkHeight));
-
-      if (minTop > maxTop) {
-        editLink.style.transform = `translateY(${TOP_SAFE}px)`;
-        return;
-      }
-
-      // ----- 决定靠上还是靠下（基于窗口中心）-----
-      const viewportCenterY = viewportHeight / 2;
-      let preferTop;
-
-      if (containerTop < 0 && containerBottom > viewportHeight) {
-        preferTop = false; // 超高容器，优先靠下
-      } else if (containerBottom < viewportCenterY) {
-        preferTop = true; // 容器整体在上方
-      } else if (containerTop > viewportCenterY) {
-        preferTop = false; // 容器整体在下方
-      } else {
-        const distTop = viewportCenterY - containerTop;
-        const distBottom = containerBottom - viewportCenterY;
-        preferTop = distTop > distBottom;
-      }
-
-      let finalTop = preferTop ? minTop : maxTop;
-
-      // 由于 effectiveTop/effectiveBottom 已包含安全余量，且 minTop/maxTop 基于它们计算，
-      // 因此 finalTop 自动满足安全要求，无需额外调整，直接限制在范围内即可
-      finalTop = Math.max(minTop, Math.min(maxTop, finalTop));
-
-      editLink.style.transform = `translateY(${finalTop}px)`;
+    // 更新每个子文档项样式，并保留其特有的 paddingBottom（与编辑器 paddingTop 一致）
+    const subItems = container.querySelectorAll(
+      `.${CONFIG.CSS_CLASSES.SUBDOC_ITEM}`,
+    );
+    subItems.forEach((item) => {
+      item.style.cssText = editorStyle;
+      item.style.paddingBottom = editorElement.style.paddingTop;
     });
   }
 
   /**
-   * 防抖函数
-   * @param {Function} func - 需要防抖的函数
-   * @param {number} wait - 等待时间（毫秒）
-   * @returns {Function} 防抖后的函数
+   * 移除所有已插入的拼接容器
    */
-  debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
-      clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
-    };
+  removeAllConcatContainers() {
+    // 断开所有 observer
+    for (const [docId, data] of this.concatContainers.entries()) {
+      if (data.observer) data.observer.disconnect();
+    }
+    this.componentService.removeAllContainers(
+      this.concatContainers,
+      this.subdocElements,
+    );
+  }
+
+  /**
+   * 封装 API 调用（供外部使用）
+   * @param {string} url - API 路径
+   * @param {Object} data - 请求数据
+   * @returns {Promise<Object>}
+   */
+  async callApi(url, data) {
+    return this.apiService.callApi(url, data);
+  }
+
+  /**
+   * 获取块属性（供外部使用）
+   * @param {string} blockId - 块 ID
+   * @returns {Promise<Object>}
+   */
+  async getBlockAttrs(blockId) {
+    return this.apiService.getBlockAttrs(blockId);
+  }
+
+  /**
+   * 设置块属性（供外部使用）
+   * @param {string} blockId - 块 ID
+   * @param {Object} attrs - 属性键值对
+   * @returns {Promise<Object>}
+   */
+  async setBlockAttrs(blockId, attrs) {
+    return this.apiService.setBlockAttrs(blockId, attrs);
+  }
+
+  /**
+   * 获取块信息（供外部使用）
+   * @param {string} blockId - 块 ID
+   * @returns {Promise<Object|null>}
+   */
+  async getBlockInfo(blockId) {
+    return this.apiService.getBlockInfo(blockId);
   }
 };
