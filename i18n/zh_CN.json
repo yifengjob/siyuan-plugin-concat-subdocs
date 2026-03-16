@@ -29,5 +29,7 @@
   "floatingEditButtonDirectionTitle": "浮动编辑按钮方向",
   "floatingEditButtonDirectionDesc": "设置浮动编辑按钮的方向，可选值为“左”、“右”。",
   "floatingEditButtonDirectionLeft": "左",
-  "floatingEditButtonDirectionRight": "右"
+  "floatingEditButtonDirectionRight": "右",
+  "showSubDocTitleTitle": "显示子文档标题",
+  "showSubDocTitleDesc": "是否显示子文档的标题，默认为“是”。"
 }
