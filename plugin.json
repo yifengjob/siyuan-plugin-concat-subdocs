@@ -12,7 +12,7 @@
     "all"
   ],
   "displayName": {
-    "default": "子文档拼接（文档流）",
+    "default": "子文档拼接-文档流",
     "en_US": "Concat Subdocs"
   },
   "description": {
