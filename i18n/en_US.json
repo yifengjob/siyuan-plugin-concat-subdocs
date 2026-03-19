@@ -1,9 +1,5 @@
 {
   "toggleTitle": "Toggle Subdoc Concatenation",
-  "clearStatesTitle": "Clear All Concatenation States",
-  "clearStatesDesc": "Reset the concatenation state of all documents to \"off\". This action is irreversible, please use with caution.",
-  "clearConfirm": "Are you sure you want to clear all document concatenation states? This action cannot be undone.",
-  "clearing": "Clearing concatenation states, please wait...",
   "clearSuccess": "Cleared concatenation states for {count} documents",
   "clearFail": "Clear failed, check the console log",
   "noDocFound": "No documents found",
