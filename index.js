@@ -2,7 +2,7 @@
  * @fileoverview 思源笔记子文档拼接插件（优化版，使用 Protyle 临时渲染）
  * @description 将当前文档的子文档内容拼接显示在主文档下方，支持多层级递归
  * @author yifeng
- * @version 1.0.13
+ * @version 1.0.14
  * @license AGPL-3.0
  */
 
