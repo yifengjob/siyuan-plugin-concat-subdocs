@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-concat-subdocs",
   "author": "YiFeng",
   "url": "https://github.com/yifengjob/siyuan-plugin-concat-subdocs",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "minAppVersion": "3.3.0",
   "disabledInPublish": false,
   "backends": [
